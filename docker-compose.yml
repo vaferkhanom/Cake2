@@ -9,7 +9,4 @@ services:
       - BOT_TOKEN=${BOT_TOKEN}
       - DB_PATH=/app/data/promise_bot.db
     volumes:
-      - bot_data:/app/data
-
-volumes:
-  bot_data:
+      - ./data:/app/data
