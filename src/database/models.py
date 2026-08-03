@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime, timezone
 from typing import Optional, List
-from sqlalchemy import BigInteger, String, Text, DateTime, ForeignKey, Enum, Boolean
+from sqlalchemy import BigInteger, String, Text, DateTime, ForeignKey, Enum, Boolean, Integer, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 import jdatetime
 
@@ -16,6 +16,8 @@ class PromiseStatus(str, enum.Enum):
     PENDING = "pending"
     CONFIRMED = "confirmed"
     REJECTED = "rejected"
+    DONE = "done"
+    BROKEN = "broken"
 
 class User(Base):
     __tablename__ = "users"
@@ -44,6 +46,7 @@ class Promise(Base):
     __tablename__ = "promises"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    promise_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, unique=True)  # Human-friendly ID, nullable for migration
     content: Mapped[str] = mapped_column(Text, nullable=False)
     giver_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.telegram_id"), nullable=False)
     receiver_id: Mapped[Optional[int]] = mapped_column(BigInteger, ForeignKey("users.telegram_id"), nullable=True)
@@ -56,6 +59,31 @@ class Promise(Base):
 
     @property
     def jalali_created_at(self) -> str:
-        # Convert stored UTC to Jalali datetime
         j_dt = jdatetime.datetime.fromtimestamp(self.created_at.timestamp())
         return j_dt.strftime("%Y/%m/%d ساعت %H:%M")
+
+    @property
+    def status_emoji(self) -> str:
+        mapping = {
+            PromiseStatus.PENDING: "⏳",
+            PromiseStatus.CONFIRMED: "✅",
+            PromiseStatus.REJECTED: "❌",
+            PromiseStatus.DONE: "🏆",
+            PromiseStatus.BROKEN: "💔",
+        }
+        return mapping.get(self.status, "")
+
+    @property
+    def status_text(self) -> str:
+        mapping = {
+            PromiseStatus.PENDING: "در انتظار تایید",
+            PromiseStatus.CONFIRMED: "تایید شده",
+            PromiseStatus.REJECTED: "رد شده",
+            PromiseStatus.DONE: "انجام شده",
+            PromiseStatus.BROKEN: "نقض شده",
+        }
+        return mapping.get(self.status, "")
+
+    @property
+    def status_display(self) -> str:
+        return f"{self.status_emoji} {self.status_text}"
