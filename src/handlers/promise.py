@@ -3,6 +3,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from sqlalchemy import select, update, func, or_
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import User, Promise, TargetType, PromiseStatus
@@ -427,7 +428,7 @@ async def process_promise_status_change(callback: CallbackQuery):
 
     promise_id = int(promise_id_str)
     async with AsyncSessionLocal() as session:
-        stmt = select(Promise).where(Promise.promise_id == promise_id)
+        stmt = select(Promise).where(Promise.promise_id == promise_id).options(selectinload(Promise.receiver))
         res = await session.execute(stmt)
         promise = res.scalar_one_or_none()
 
@@ -435,18 +436,20 @@ async def process_promise_status_change(callback: CallbackQuery):
             await callback.answer("فقط قول‌های تاییدشده می‌تونن به انجام/نقض تغییر کنن", show_alert=True)
             return
 
+        receiver_display = promise.receiver.display_name if promise.receiver else "دوست"
+
         if action == "done":
             promise.status = PromiseStatus.DONE
             await session.commit()
             await callback.message.edit_text(
-                f"#{promise.promise_id} · {promise.status_display}\n💬 {promise.content}\n👤 به: {promise.receiver.display_name if promise.receiver else 'دوست'}\n🗓 {promise.jalali_created_at}",
+                f"#{promise.promise_id} · {promise.status_display}\n💬 {promise.content}\n👤 به: {receiver_display}\n🗓 {promise.jalali_created_at}",
                 reply_markup=get_promise_detail_keyboard(promise.promise_id, promise.giver_id)
             )
         elif action == "broken":
             promise.status = PromiseStatus.BROKEN
             await session.commit()
             await callback.message.edit_text(
-                f"#{promise.promise_id} · {promise.status_display}\n💬 {promise.content}\n👤 به: {promise.receiver.display_name if promise.receiver else 'دوست'}\n🗓 {promise.jalali_created_at}",
+                f"#{promise.promise_id} · {promise.status_display}\n💬 {promise.content}\n👤 به: {receiver_display}\n🗓 {promise.jalali_created_at}",
                 reply_markup=get_promise_detail_keyboard(promise.promise_id, promise.giver_id)
             )
 
