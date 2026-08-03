@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  promise-bot:
+    build: .
+    container_name: promise_bot
+    restart: unless-stopped
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - DB_PATH=/app/data/promise_bot.db
+    volumes:
+      - bot_data:/app/data
+
+volumes:
+  bot_data:
