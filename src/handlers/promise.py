@@ -421,6 +421,7 @@ async def process_list_promises(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("promise_status:"))
 async def process_promise_status_change(callback: CallbackQuery):
+    """Phase 4: Giver claims done/broken - edit message, save message_id/chat_id for later edit"""
     _, action, promise_id_str, giver_id_str = callback.data.split(":")
     if int(giver_id_str) != callback.from_user.id:
         await callback.answer("فقط قول‌دهنده می‌تونه وضعیت رو عوض کنه", show_alert=True)
@@ -439,24 +440,180 @@ async def process_promise_status_change(callback: CallbackQuery):
         receiver_display = promise.receiver.display_name if promise.receiver else "دوست"
 
         if action == "done":
+            # Phase 4: Edit message to "waiting for receiver confirmation"
+            # Save message_id and chat_id for later edit when receiver responds
+            promise.status = PromiseStatus.DONE  # Temporary status, will be updated after receiver confirms
+            # Actually, let's use a different approach: keep CONFIRMED but track claim state
+            # For now, change to a "claimed" state
             promise.status = PromiseStatus.DONE
+            # Save the message info for later editing when receiver confirms/disputes
+            promise.giver_claim_message_id = callback.message.message_id
+            promise.giver_claim_chat_id = callback.message.chat.id
             await session.commit()
+            
             await callback.message.edit_text(
-                f"#{promise.promise_id} · {promise.status_display}\n💬 {promise.content}\n👤 به: {receiver_display}\n🗓 {promise.jalali_created_at}",
-                reply_markup=get_promise_detail_keyboard(promise.promise_id, promise.giver_id)
+                f"#{promise.promise_id} · ⏳ در انتظار تایید طرف مقابل\n💬 {promise.content}\n👤 به: {receiver_display}\n🗓 {promise.jalali_created_at}"
             )
+            # Send confirmation request to receiver
+            # Reload promise with giver relationship for notification
+            stmt = select(Promise).where(Promise.promise_id == promise_id).options(selectinload(Promise.giver), selectinload(Promise.receiver))
+            res = await session.execute(stmt)
+            promise_with_giver = res.scalar_one_or_none()
+            await send_claim_notification(callback.bot, promise_with_giver, action)
+            
         elif action == "broken":
             promise.status = PromiseStatus.BROKEN
+            # For broken, it's final - no receiver confirmation needed
+            promise.giver_claim_message_id = callback.message.message_id
+            promise.giver_claim_chat_id = callback.message.chat.id
             await session.commit()
             await callback.message.edit_text(
                 f"#{promise.promise_id} · {promise.status_display}\n💬 {promise.content}\n👤 به: {receiver_display}\n🗓 {promise.jalali_created_at}",
                 reply_markup=get_promise_detail_keyboard(promise.promise_id, promise.giver_id)
             )
+            
+            # Notify receiver that promise is broken
+            if promise.receiver_id and promise.receiver_id > 0:
+                try:
+                    await callback.bot.send_message(
+                        promise.receiver_id,
+                        f"⚠️ {promise.giver.display_name if promise.giver else 'قول‌دهنده'} قول «{promise.content}» رو نقض کرد 💔"
+                    )
+                except Exception:
+                    pass
+
+# Phase 4: New handlers for receiver confirm/dispute done claim
+@router.callback_query(F.data.startswith("confirm_done:"))
+async def process_confirm_done(callback: CallbackQuery):
+    """Receiver confirms the promise is done"""
+    _, promise_id_str, receiver_id_str = callback.data.split(":")
+    if int(receiver_id_str) != callback.from_user.id:
+        await callback.answer("این دکمه برای شما نیست", show_alert=True)
+        return
+
+    promise_id = int(promise_id_str)
+    async with AsyncSessionLocal() as session:
+        stmt = select(Promise).where(Promise.promise_id == promise_id).options(selectinload(Promise.giver), selectinload(Promise.receiver))
+        res = await session.execute(stmt)
+        promise = res.scalar_one_or_none()
+
+        if not promise or promise.status != PromiseStatus.DONE:
+            await callback.answer("این قول در وضعیت مناسب نیست.", show_alert=True)
+            return
+
+        # Update promise status to DONE (confirmed by both)
+        promise.status = PromiseStatus.DONE
+        await session.commit()
+
+        # Edit receiver's message
+        await callback.message.edit_text(
+            f"#{promise.promise_id} · ✅ تایید شد - انجام شده\n💬 {promise.content}\n👤 از: {promise.giver.display_name if promise.giver else 'دوست'}\n🗓 {promise.jalali_created_at}"
+        )
+
+        # Edit giver's message using saved message_id/chat_id
+        if promise.giver_claim_message_id and promise.giver_claim_chat_id:
+            try:
+                await callback.bot.edit_message_text(
+                    chat_id=promise.giver_claim_chat_id,
+                    message_id=promise.giver_claim_message_id,
+                    text=f"#{promise.promise_id} · ✅ تایید شد - انجام شده\n💬 {promise.content}\n👤 به: {promise.receiver.display_name if promise.receiver else 'دوست'}\n🗓 {promise.jalali_created_at}",
+                    reply_markup=get_promise_detail_keyboard(promise.promise_id, promise.giver_id)
+                )
+            except Exception as e:
+                # Log error but don't fail the operation
+                import logging
+                logging.warning(f"Failed to edit giver message: {e}")
+                pass
+
+@router.callback_query(F.data.startswith("dispute_done:"))
+async def process_dispute_done(callback: CallbackQuery):
+    """Receiver disputes the promise is done"""
+    _, promise_id_str, receiver_id_str = callback.data.split(":")
+    if int(receiver_id_str) != callback.from_user.id:
+        await callback.answer("این دکمه برای شما نیست", show_alert=True)
+        return
+
+    promise_id = int(promise_id_str)
+    async with AsyncSessionLocal() as session:
+        stmt = select(Promise).where(Promise.promise_id == promise_id).options(selectinload(Promise.giver), selectinload(Promise.receiver))
+        res = await session.execute(stmt)
+        promise = res.scalar_one_or_none()
+
+        if not promise or promise.status != PromiseStatus.DONE:
+            await callback.answer("این قول در وضعیت مناسب نیست.", show_alert=True)
+            return
+
+        # Save message IDs before clearing them
+        saved_message_id = promise.giver_claim_message_id
+        saved_chat_id = promise.giver_claim_chat_id
+
+        # Revert to CONFIRMED status - dispute means it's not done
+        promise.status = PromiseStatus.CONFIRMED
+        # Clear the claim message IDs since we're back to confirmed
+        promise.giver_claim_message_id = None
+        promise.giver_claim_chat_id = None
+        await session.commit()
+
+        # Edit receiver's message
+        await callback.message.edit_text(
+            f"#{promise.promise_id} · ⚠️ رد شد - نقض شده\n💬 {promise.content}\n👤 از: {promise.giver.display_name if promise.giver else 'دوست'}\n🗓 {promise.jalali_created_at}"
+        )
+
+        # Edit giver's message using saved message_id/chat_id
+        if saved_message_id and saved_chat_id:
+            try:
+                await callback.bot.edit_message_text(
+                    chat_id=saved_chat_id,
+                    message_id=saved_message_id,
+                    text=f"#{promise.promise_id} · {promise.status_display}\n💬 {promise.content}\n👤 به: {promise.receiver.display_name if promise.receiver else 'دوست'}\n🗓 {promise.jalali_created_at}",
+                    reply_markup=get_promise_detail_keyboard(promise.promise_id, promise.giver_id)
+                )
+            except Exception as e:
+                import logging
+                logging.warning(f"Failed to edit giver message: {e}")
+                pass
+
+        # Notify giver about dispute
+        if promise.giver_id:
+            try:
+                await callback.bot.send_message(
+                    promise.giver_id,
+                    f"⚠️ {promise.receiver.display_name if promise.receiver else 'گیرنده'} قول «{promise.content}» رو انجام‌داده رو رد کرد."
+                )
+            except Exception:
+                pass
+
+async def send_claim_notification(bot, promise: Promise, action: str):
+    """Send notification to receiver about claim"""
+    if not promise.receiver_id or promise.receiver_id <= 0:
+        return
+    
+    if action == "done":
+        msg_text = (
+            f"🏁 {promise.giver.display_name if promise.giver else 'قول‌دهنده'} می‌گه قول «{promise.content}» رو انجام داده.\n"
+            f"تایید می‌کنی؟"
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ بله انجام داده", callback_data=f"confirm_done:{promise.promise_id}:{promise.receiver_id}"),
+                InlineKeyboardButton(text="❌ نه انجام نداده", callback_data=f"dispute_done:{promise.promise_id}:{promise.receiver_id}")
+            ]
+        ])
+    else:
+        # For broken, we already handled it
+        return
+    
+    try:
+        await bot.send_message(promise.receiver_id, msg_text, reply_markup=kb)
+    except Exception:
+        pass
+
+# Import for keyboard in send_claim_notification
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 @router.message(F.text == settings.MENU_OPTIONS["PROFILE"])
 async def show_profile(message: Message):
     async with AsyncSessionLocal() as session:
-        # Count promises by status for this user as giver
         total_given_stmt = select(func.count(Promise.id)).where(Promise.giver_id == message.from_user.id)
         total_given_res = await session.execute(total_given_stmt)
         total_given = total_given_res.scalar() or 0

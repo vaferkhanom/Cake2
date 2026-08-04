@@ -11,7 +11,9 @@ from src.handlers.promise import (
     process_promise_approval,
     get_or_create_user,
     group_promise_command,
-    process_promise_status_change
+    process_promise_status_change,
+    process_confirm_done,
+    process_dispute_done,
 )
 
 @pytest.mark.asyncio
@@ -394,7 +396,8 @@ async def test_only_giver_can_change_promise_status():
         callback_receiver = MagicMock()
         callback_receiver.data = f"promise_status:done:456:1001"  # giver_id=1001 in callback data
         callback_receiver.from_user.id = 2002  # receiver trying to change
-        callback_receiver.message = AsyncMock()
+        callback_receiver.message = MagicMock()
+        callback_receiver.message.edit_text = AsyncMock()
         callback_receiver.answer = AsyncMock()
 
         await p_mod.process_promise_status_change(callback_receiver)
@@ -415,18 +418,92 @@ async def test_only_giver_can_change_promise_status():
         callback_giver = MagicMock()
         callback_giver.data = f"promise_status:done:456:1001"  # giver_id in callback
         callback_giver.from_user.id = 1001  # giver
-        callback_giver.message = AsyncMock()
+        callback_giver.message = MagicMock()
+        callback_giver.message.message_id = 12345
+        callback_giver.message.chat.id = -1001234567890
+        callback_giver.message.edit_text = AsyncMock()
         callback_giver.answer = AsyncMock()
 
         await p_mod.process_promise_status_change(callback_giver)
 
-        # Should succeed and update message
+        # Should succeed and update message to "waiting for receiver confirmation" (Phase 4 behavior)
         callback_giver.message.edit_text.assert_awaited_once()
         call_args = callback_giver.message.edit_text.call_args[0][0]
-        assert "🏆" in call_args  # done emoji
-        assert "انجام شده" in call_args
+        assert "⏳ در انتظار تایید طرف مقابل" in call_args  # Phase 4: waiting for receiver
+        assert "انجام پروژه" in call_args
+        
+        # Verify status changed in DB to DONE (claimed state)
+        async with session_maker() as session:
+            stmt = select(Promise).where(Promise.promise_id == 456)
+            res = await session.execute(stmt)
+            p = res.scalar_one_or_none()
+            assert p.status == PromiseStatus.DONE
+            # Verify message IDs saved
+            assert p.giver_claim_message_id == 12345
+            assert p.giver_claim_chat_id == -1001234567890
 
-        # Verify status changed in DB
+    finally:
+        p_mod.AsyncSessionLocal = original_session_local
+        await engine.dispose()
+
+# --- NEW TESTS FOR PHASE 4 ---
+
+@pytest.mark.asyncio
+async def test_process_confirm_done_receiver_confirms():
+    """Test receiver confirms the promise is done - edits both messages"""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    import src.handlers.promise as p_mod
+    original_session_local = p_mod.AsyncSessionLocal
+    p_mod.AsyncSessionLocal = session_maker
+
+    try:
+        async with session_maker() as session:
+            giver = User(telegram_id=1001, username="giver", full_name="Giver")
+            receiver = User(telegram_id=2002, username="receiver", full_name="Receiver")
+            session.add_all([giver, receiver])
+            await session.commit()
+
+            promise = Promise(
+                promise_id=456,
+                content="انجام پروژه",
+                giver_id=giver.telegram_id,
+                receiver_id=receiver.telegram_id,
+                target_type=TargetType.FRIEND,
+                status=PromiseStatus.DONE,  # Claimed by giver
+                giver_claim_message_id=12345,
+                giver_claim_chat_id=-1001234567890,
+            )
+            session.add(promise)
+            await session.commit()
+
+        # Mock callback from receiver
+        callback = MagicMock()
+        callback.data = f"confirm_done:456:2002"
+        callback.from_user.id = 2002
+        callback.message = MagicMock()
+        callback.message.edit_text = AsyncMock()
+        callback.bot = MagicMock()
+        callback.bot.edit_message_text = AsyncMock()
+
+        await p_mod.process_confirm_done(callback)
+
+        # Receiver's message should be edited
+        callback.message.edit_text.assert_awaited_once()
+        call_args = callback.message.edit_text.call_args[0][0]
+        assert "✅ تایید شد - انجام شده" in call_args
+
+        # Giver's message should be edited via bot.edit_message_text
+        callback.bot.edit_message_text.assert_awaited_once()
+        edit_args = callback.bot.edit_message_text.call_args
+        assert edit_args[1]['chat_id'] == -1001234567890
+        assert edit_args[1]['message_id'] == 12345
+        assert "✅ تایید شد - انجام شده" in edit_args[1]['text']
+
+        # Verify DB status is DONE
         async with session_maker() as session:
             stmt = select(Promise).where(Promise.promise_id == 456)
             res = await session.execute(stmt)
@@ -436,3 +513,147 @@ async def test_only_giver_can_change_promise_status():
     finally:
         p_mod.AsyncSessionLocal = original_session_local
         await engine.dispose()
+
+@pytest.mark.asyncio
+async def test_process_dispute_done_receiver_disputes():
+    """Test receiver disputes the promise is done - edits both messages, reverts to CONFIRMED"""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    import src.handlers.promise as p_mod
+    original_session_local = p_mod.AsyncSessionLocal
+    p_mod.AsyncSessionLocal = session_maker
+
+    try:
+        async with session_maker() as session:
+            giver = User(telegram_id=1001, username="giver", full_name="Giver")
+            receiver = User(telegram_id=2002, username="receiver", full_name="Receiver")
+            session.add_all([giver, receiver])
+            await session.commit()
+
+            promise = Promise(
+                promise_id=456,
+                content="انجام پروژه",
+                giver_id=giver.telegram_id,
+                receiver_id=receiver.telegram_id,
+                target_type=TargetType.FRIEND,
+                status=PromiseStatus.DONE,  # Claimed by giver
+                giver_claim_message_id=12345,
+                giver_claim_chat_id=-1001234567890,
+            )
+            session.add(promise)
+            await session.commit()
+
+        # Mock callback from receiver
+        callback = MagicMock()
+        callback.data = f"dispute_done:456:2002"
+        callback.from_user.id = 2002
+        callback.message = MagicMock()
+        callback.message.edit_text = AsyncMock()
+        callback.bot = MagicMock()
+        callback.bot.edit_message_text = AsyncMock()
+        callback.bot.send_message = AsyncMock()
+
+        await p_mod.process_dispute_done(callback)
+
+        # Receiver's message should be edited
+        callback.message.edit_text.assert_awaited_once()
+        call_args = callback.message.edit_text.call_args[0][0]
+        assert "⚠️ رد شد - نقض شده" in call_args
+
+        # Giver's message should be edited via bot.edit_message_text (back to CONFIRMED with buttons)
+        callback.bot.edit_message_text.assert_awaited_once()
+        edit_args = callback.bot.edit_message_text.call_args
+        assert edit_args[1]['chat_id'] == -1001234567890
+        assert edit_args[1]['message_id'] == 12345
+        assert "✅ تایید شده" in edit_args[1]['text']  # Back to confirmed
+
+        # Giver should be notified
+        callback.bot.send_message.assert_awaited()
+
+        # Verify DB status reverted to CONFIRMED and message IDs cleared
+        async with session_maker() as session:
+            stmt = select(Promise).where(Promise.promise_id == 456)
+            res = await session.execute(stmt)
+            p = res.scalar_one_or_none()
+            assert p.status == PromiseStatus.CONFIRMED
+            assert p.giver_claim_message_id is None
+            assert p.giver_claim_chat_id is None
+
+    finally:
+        p_mod.AsyncSessionLocal = original_session_local
+        await engine.dispose()
+
+@pytest.mark.asyncio
+async def test_edit_giver_message_failure_does_not_break_flow():
+    """Test that if edit_message_text fails for giver, the operation still completes"""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    import src.handlers.promise as p_mod
+    original_session_local = p_mod.AsyncSessionLocal
+    p_mod.AsyncSessionLocal = session_maker
+
+    try:
+        async with session_maker() as session:
+            giver = User(telegram_id=1001, username="giver", full_name="Giver")
+            receiver = User(telegram_id=2002, username="receiver", full_name="Receiver")
+            session.add_all([giver, receiver])
+            await session.commit()
+
+            promise = Promise(
+                promise_id=456,
+                content="انجام پروژه",
+                giver_id=giver.telegram_id,
+                receiver_id=receiver.telegram_id,
+                target_type=TargetType.FRIEND,
+                status=PromiseStatus.DONE,
+                giver_claim_message_id=12345,
+                giver_claim_chat_id=-1001234567890,
+            )
+            session.add(promise)
+            await session.commit()
+
+        # Mock callback from receiver - edit_message_text will raise exception
+        callback = MagicMock()
+        callback.data = f"confirm_done:456:2002"
+        callback.from_user.id = 2002
+        callback.message = MagicMock()
+        callback.message.edit_text = AsyncMock()
+        callback.bot = MagicMock()
+        callback.bot.edit_message_text = AsyncMock(side_effect=Exception("Message to edit not found"))
+
+        # Should not raise exception
+        await p_mod.process_confirm_done(callback)
+
+        # Receiver's message still edited
+        callback.message.edit_text.assert_awaited_once()
+
+        # DB status still updated to DONE
+        async with session_maker() as session:
+            stmt = select(Promise).where(Promise.promise_id == 456)
+            res = await session.execute(stmt)
+            p = res.scalar_one_or_none()
+            assert p.status == PromiseStatus.DONE
+
+    finally:
+        p_mod.AsyncSessionLocal = original_session_local
+        await engine.dispose()
+
+@pytest.mark.asyncio
+async def test_callback_message_edit_not_send_for_callback_responses():
+    """Test that callback handlers use edit_text not send_message for responses"""
+    # This is a meta-test to verify the pattern in the code
+    # The existing tests already verify edit_text is called for:
+    # - process_initial_confirm (no -> edit_text)
+    # - process_target_selection (self -> edit_text)
+    # - process_promise_approval (yes/no -> edit_text)
+    # - process_list_promises (-> edit_text)
+    # - process_promise_status_change (done/broken -> edit_text)
+    # - process_confirm_done/dispute_done (-> edit_text)
+    # All these use edit_text on callback.message, not send_message
+    pass

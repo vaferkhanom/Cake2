@@ -46,13 +46,17 @@ class Promise(Base):
     __tablename__ = "promises"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    promise_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, unique=True)  # Human-friendly ID, nullable for migration
+    promise_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, unique=True)  # Human-friendly ID
     content: Mapped[str] = mapped_column(Text, nullable=False)
     giver_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.telegram_id"), nullable=False)
     receiver_id: Mapped[Optional[int]] = mapped_column(BigInteger, ForeignKey("users.telegram_id"), nullable=True)
     target_type: Mapped[TargetType] = mapped_column(Enum(TargetType), nullable=False)
     status: Mapped[PromiseStatus] = mapped_column(Enum(PromiseStatus), default=PromiseStatus.PENDING)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    
+    # Phase 4: For edit-message flow in claim/confirm/dispute
+    giver_claim_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    giver_claim_chat_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
 
     giver: Mapped["User"] = relationship("User", foreign_keys=[giver_id], back_populates="given_promises")
     receiver: Mapped[Optional["User"]] = relationship("User", foreign_keys=[receiver_id], back_populates="received_promises")
