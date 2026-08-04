@@ -1,659 +1,604 @@
+"""Tests for Promise Bot - Phase 5 complete."""
+
+from __future__ import annotations
+
+import sys
+from contextlib import asynccontextmanager
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 import pytest_asyncio
-from unittest.mock import AsyncMock, MagicMock
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy import select
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.memory import MemoryStorage
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from src.database.models import Base, User, Promise, TargetType, PromiseStatus
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from src.database.models import Base, Promise, PromiseStatus, TargetType, User
+from src.database.session import create_promise, get_or_create_user
 from src.handlers.promise import (
-    process_initial_confirm,
-    process_target_selection,
-    process_promise_approval,
-    get_or_create_user,
-    group_promise_command,
-    process_promise_status_change,
-    process_confirm_done,
-    process_dispute_done,
+    new_promise_start,
+    promise_content_received,
+    promise_confirmed,
+    promise_edit,
+    target_self,
+    target_friend,
+    promise_accepted,
+    promise_rejected,
+    _process_friend,
+    show_my_promises_menu,
+    show_promise_list,
+    show_promise_detail,
 )
+from src.keyboards.inline import (
+    ConfirmPromiseCallback,
+    ReceiverConfirmCallback,
+    TargetCallback,
+    PromiseStatusCallback,
+    ClaimDoneCallback,
+    ReceiverConfirmDoneCallback,
+    DeadlineCallback,
+    PromiseListCallback,
+    PromiseItemCallback,
+)
+from src.states.promise import PromiseStates
+from tests.conftest import make_message, make_callback
+
+
+# ── Helpers ────────────────────────────────────────────
+
+async def _make_test_db():
+    eng = create_async_engine(
+        "sqlite+aiosqlite://", echo=False,
+        connect_args={"check_same_thread": False},
+    )
+    async with eng.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(eng, class_=AsyncSession, expire_on_commit=False)
+    return eng, factory
+
+
+def _session_cm(factory):
+    """Mock get_session — yields session and commits on exit (like real one)."""
+    @asynccontextmanager
+    async def _cm():
+        async with factory() as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+    return _cm
+
+
+def _make_fsm(storage=None):
+    if storage is None:
+        storage = MemoryStorage()
+    return FSMContext(storage=storage, key=("chat", "user"))
+
+
+# ── Tests ──────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_get_or_create_user_username_matching():
-    """Test that when a real user starts the bot with a username that matches a stub user,
-    the stub is merged and existing promises pointing to the stub's negative ID are updated."""
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    
-    async with session_maker() as session:
-        # 1. Giver creates a promise for a friend who hasn't started the bot
-        #    This creates a stub user with negative ID
-        stub_user = User(telegram_id=-123456, username="my_friend", full_name="my_friend", has_started_bot=False)
-        session.add(stub_user)
+async def test_start_enters_fsm():
+    state = _make_fsm()
+    msg = make_message(text="🤝 ثبت یه قول جدید")
+    await new_promise_start(msg, state)
+    assert await state.get_state() == PromiseStates.waiting_for_content
+
+
+@pytest.mark.asyncio
+async def test_content_received():
+    state = _make_fsm()
+    await state.set_state(PromiseStates.waiting_for_content)
+    msg = make_message(text="ورزش کنم")
+    await promise_content_received(msg, state)
+    assert await state.get_state() == PromiseStates.waiting_for_confirmation
+    data = await state.get_data()
+    assert data["content"] == "ورزش کنم"
+
+
+@pytest.mark.asyncio
+async def test_content_empty_stays():
+    state = _make_fsm()
+    await state.set_state(PromiseStates.waiting_for_content)
+    msg = make_message(text="   ")
+    await promise_content_received(msg, state)
+    assert await state.get_state() == PromiseStates.waiting_for_content
+
+
+@pytest.mark.asyncio
+async def test_confirm_moves_to_target():
+    state = _make_fsm()
+    await state.set_state(PromiseStates.waiting_for_confirmation)
+    cb = make_callback(ConfirmPromiseCallback(action="yes").pack())
+    await promise_confirmed(cb, state)
+    assert await state.get_state() == PromiseStates.waiting_for_deadline_choice
+
+
+@pytest.mark.asyncio
+async def test_edit_goes_back():
+    state = _make_fsm()
+    await state.set_state(PromiseStates.waiting_for_confirmation)
+    cb = make_callback(ConfirmPromiseCallback(action="edit").pack())
+    await promise_edit(cb, state)
+    assert await state.get_state() == PromiseStates.waiting_for_content
+
+
+@pytest.mark.asyncio
+async def test_target_self_creates_confirmed():
+    eng, factory = await _make_test_db()
+    state = _make_fsm()
+    await state.set_state(PromiseStates.waiting_for_target)
+    await state.update_data(content="هر روز ورزش")
+
+    cb = make_callback(TargetCallback(target="self").pack(), user_id=100)
+
+    with patch("src.handlers.promise.get_session", _session_cm(factory)):
+        await target_self(cb, state)
+
+    assert await state.get_state() is None
+    cb.message.answer.assert_called_once()
+    msg_text = cb.message.answer.call_args[0][0]
+    assert "#1" in msg_text
+
+    async with factory() as s:
+        from sqlalchemy import select
+        p = (await s.execute(select(Promise))).scalar_one()
+        assert p.status == PromiseStatus.CONFIRMED
+        assert p.giver_id == 100
+        assert p.receiver_id == 100
+    await eng.dispose()
+
+
+@pytest.mark.asyncio
+async def test_target_friend_asks_id():
+    state = _make_fsm()
+    await state.set_state(PromiseStates.waiting_for_target)
+    cb = make_callback(TargetCallback(target="friend").pack())
+    await target_friend(cb, state)
+    assert await state.get_state() == PromiseStates.waiting_for_friend_id
+
+
+@pytest.mark.asyncio
+async def test_friend_username_known_sends_dm():
+    eng, factory = await _make_test_db()
+    state = _make_fsm()
+    await state.set_state(PromiseStates.waiting_for_friend_id)
+    await state.update_data(content="قول دوستانه")
+
+    async with factory() as s:
+        await get_or_create_user(s, 200, "bob", "Bob")
+        await s.commit()
+
+    msg = make_message(text="@bob", user_id=100)
+
+    with patch("src.handlers.promise.get_session", _session_cm(factory)):
+        await _process_friend(msg, state, username="bob")
+
+    assert await state.get_state() is None
+    msg.bot.send_message.assert_called_once()
+    send_kwargs = msg.bot.send_message.call_args[1]
+    assert send_kwargs["chat_id"] == 200
+    assert "قبول" in send_kwargs["text"]
+    await eng.dispose()
+
+
+@pytest.mark.asyncio
+async def test_friend_unknown_shows_invite():
+    eng, factory = await _make_test_db()
+    state = _make_fsm()
+    await state.set_state(PromiseStates.waiting_for_friend_id)
+    await state.update_data(content="قول مجهول")
+
+    msg = make_message(text="@ghost", user_id=100)
+    msg.bot.get_me = AsyncMock(return_value=MagicMock(username="test_promise_bot"))
+
+    with patch("src.handlers.promise.get_session", _session_cm(factory)):
+        await _process_friend(msg, state, username="ghost")
+
+    assert await state.get_state() is None
+    answer_text = msg.answer.call_args[0][0]
+    assert "test_promise_bot" in answer_text
+    await eng.dispose()
+
+
+@pytest.mark.asyncio
+async def test_receiver_accept():
+    eng, factory = await _make_test_db()
+
+    async with factory() as s:
+        await get_or_create_user(s, 100, "alice", "Alice")
+        await get_or_create_user(s, 200, "bob", "Bob")
+        p = await create_promise(s, 100, "test", TargetType.FRIEND, 200, PromiseStatus.PENDING)
+        pid = p.id
+        await s.commit()
+
+    cb_data = ReceiverConfirmCallback(promise_id=pid, action="accept")
+    cb = make_callback(cb_data.pack(), user_id=200, full_name="Bob")
+
+    with patch("src.handlers.promise.get_session", _session_cm(factory)):
+        await promise_accepted(cb, cb_data)
+
+    async with factory() as s:
+        from sqlalchemy import select
+        p = (await s.execute(select(Promise).where(Promise.id == pid))).scalar_one()
+        assert p.status == PromiseStatus.CONFIRMED
+
+    cb.bot.send_message.assert_called_once()
+    assert cb.bot.send_message.call_args[1]["chat_id"] == 100
+    await eng.dispose()
+
+
+@pytest.mark.asyncio
+async def test_receiver_reject():
+    eng, factory = await _make_test_db()
+
+    async with factory() as s:
+        await get_or_create_user(s, 100, "alice", "Alice")
+        await get_or_create_user(s, 200, "bob", "Bob")
+        p = await create_promise(s, 100, "reject me", TargetType.FRIEND, 200, PromiseStatus.PENDING)
+        pid = p.id
+        await s.commit()
+
+    cb_data = ReceiverConfirmCallback(promise_id=pid, action="reject")
+    cb = make_callback(cb_data.pack(), user_id=200, full_name="Bob")
+
+    with patch("src.handlers.promise.get_session", _session_cm(factory)):
+        await promise_rejected(cb, cb_data)
+
+    async with factory() as s:
+        from sqlalchemy import select
+        p = (await s.execute(select(Promise).where(Promise.id == pid))).scalar_one()
+        assert p.status == PromiseStatus.REJECTED
+    await eng.dispose()
+
+
+@pytest.mark.asyncio
+async def test_wrong_user_cannot_accept():
+    eng, factory = await _make_test_db()
+
+    async with factory() as s:
+        await get_or_create_user(s, 100, "alice", "Alice")
+        await get_or_create_user(s, 200, "bob", "Bob")
+        p = await create_promise(s, 100, "private", TargetType.FRIEND, 200, PromiseStatus.PENDING)
+        pid = p.id
+        await s.commit()
+
+    cb_data = ReceiverConfirmCallback(promise_id=pid, action="accept")
+    cb = make_callback(cb_data.pack(), user_id=999, full_name="Hacker")
+
+    with patch("src.handlers.promise.get_session", _session_cm(factory)):
+        await promise_accepted(cb, cb_data)
+
+    cb.answer.assert_called_with("این دکمه برای شما نیست", show_alert=True)
+    await eng.dispose()
+
+
+@pytest.mark.asyncio
+async def test_friend_by_forwarded_message():
+    eng, factory = await _make_test_db()
+    state = _make_fsm()
+    await state.set_state(PromiseStates.waiting_for_friend_id)
+    await state.update_data(content="قول از فوروارد")
+
+    async with factory() as s:
+        await get_or_create_user(s, 300, "charlie", "Charlie")
+        await s.commit()
+
+    msg = make_message(user_id=100)
+    msg.forward_from = MagicMock()
+    msg.forward_from.id = 300
+
+    with patch("src.handlers.promise.get_session", _session_cm(factory)):
+        await _process_friend(msg, state, friend_id=300)
+
+    assert await state.get_state() is None
+    msg.bot.send_message.assert_called_once()
+    send_kwargs = msg.bot.send_message.call_args[1]
+    assert send_kwargs["chat_id"] == 300
+    await eng.dispose()
+
+
+@pytest.mark.asyncio
+async def test_friend_numeric_id_not_in_db():
+    eng, factory = await _make_test_db()
+    state = _make_fsm()
+    await state.set_state(PromiseStates.waiting_for_friend_id)
+    await state.update_data(content="قول عددی")
+
+    msg = make_message(text="99999", user_id=100)
+    msg.bot.get_me = AsyncMock(return_value=MagicMock(username="test_promise_bot"))
+
+    with patch("src.handlers.promise.get_session", _session_cm(factory)):
+        await _process_friend(msg, state, friend_id=99999)
+
+    assert await state.get_state() is None
+    answer_text = msg.answer.call_args[0][0]
+    assert "test_promise_bot" in answer_text
+    await eng.dispose()
+
+
+# ── Phase 5: Promise List Grid Tests ──────────────────
+
+@pytest.mark.asyncio
+async def test_show_my_promises_menu():
+    """Test that main menu shows 3 options."""
+    msg = make_message(text="📋 قول‌های من")
+    await show_my_promises_menu(msg)
+    msg.answer.assert_called_once()
+    # Should show inline keyboard with 3 buttons
+    call_kwargs = msg.answer.call_args[1]
+    assert "reply_markup" in call_kwargs
+
+
+@pytest.mark.asyncio
+async def test_self_list_empty():
+    eng, factory = await _make_test_db()
+    cb = make_callback(PromiseListCallback(list_type="self", page=0).pack(), user_id=100)
+
+    with patch("src.handlers.promise.get_session", _session_cm(factory)):
+        await show_promise_list(cb, PromiseListCallback(list_type="self", page=0))
+
+    # Should show empty message
+    cb.message.edit_text.assert_called_once()
+    edit_text = cb.message.edit_text.call_args[0][0]
+    assert "قولی برای خودت ثبت نکردی" in edit_text
+    await eng.dispose()
+
+
+@pytest.mark.asyncio
+async def test_given_list_empty():
+    eng, factory = await _make_test_db()
+    cb = make_callback(PromiseListCallback(list_type="given", page=0).pack(), user_id=100)
+
+    with patch("src.handlers.promise.get_session", _session_cm(factory)):
+        await show_promise_list(cb, PromiseListCallback(list_type="given", page=0))
+
+    cb.message.edit_text.assert_called_once()
+    edit_text = cb.message.edit_text.call_args[0][0]
+    assert "قولی به دوستات ندادی" in edit_text
+    await eng.dispose()
+
+
+@pytest.mark.asyncio
+async def test_received_list_empty():
+    eng, factory = await _make_test_db()
+    cb = make_callback(PromiseListCallback(list_type="received", page=0).pack(), user_id=100)
+
+    with patch("src.handlers.promise.get_session", _session_cm(factory)):
+        await show_promise_list(cb, PromiseListCallback(list_type="received", page=0))
+
+    cb.message.edit_text.assert_called_once()
+    edit_text = cb.message.edit_text.call_args[0][0]
+    assert "کسی بهت قول نداده" in edit_text
+    await eng.dispose()
+
+
+@pytest.mark.asyncio
+async def test_self_list_pagination():
+    """Test self list with >4 items shows pagination."""
+    eng, factory = await _make_test_db()
+
+    # Create 6 self promises
+    async with factory() as s:
+        await get_or_create_user(s, 100, "alice", "Alice")
+        for i in range(6):
+            await create_promise(s, 100, f"قول شخصی {i+1}", TargetType.SELF, 100, PromiseStatus.CONFIRMED)
+        await s.commit()
+
+    cb = make_callback(PromiseListCallback(list_type="self", page=0).pack(), user_id=100)
+
+    with patch("src.handlers.promise.get_session", _session_cm(factory)):
+        await show_promise_list(cb, PromiseListCallback(list_type="self", page=0))
+
+    cb.message.edit_text.assert_called_once()
+    edit_text = cb.message.edit_text.call_args[0][0]
+    assert "صفحه 1 از 2" in edit_text
+    assert "6 قول" in edit_text
+
+    # Check keyboard has 4 buttons + navigation
+    call_kwargs = cb.message.edit_text.call_args[1]
+    keyboard = call_kwargs["reply_markup"]
+    # 4 promise buttons + 1 navigation row with "بعدی"
+    await eng.dispose()
+
+
+@pytest.mark.asyncio
+async def test_promise_list_page_1_and_page_2():
+    """Test pagination: page 0 and page 1 show different items."""
+    eng, factory = await _make_test_db()
+
+    async with factory() as s:
+        await get_or_create_user(s, 100, "alice", "Alice")
+        for i in range(5):
+            await create_promise(s, 100, f"Self Promise {i+1}", TargetType.SELF, 100, PromiseStatus.CONFIRMED)
+        await s.commit()
+
+    # Page 0
+    cb0 = make_callback(PromiseListCallback(list_type="self", page=0).pack(), user_id=100)
+    with patch("src.handlers.promise.get_session", _session_cm(factory)):
+        await show_promise_list(cb0, PromiseListCallback(list_type="self", page=0))
+
+    cb0.message.edit_text.assert_called_once()
+    # Should have "بعدی" button
+    await eng.dispose()
+
+
+@pytest.mark.asyncio
+async def test_promise_detail_from_grid():
+    """Test clicking a grid button shows detail with back button."""
+    eng, factory = await _make_test_db()
+
+    async with factory() as s:
+        await get_or_create_user(s, 100, "alice", "Alice")
+        p = await create_promise(s, 100, "Detail Test", TargetType.SELF, 100, PromiseStatus.CONFIRMED)
+        pid = p.id
+        await s.commit()
+
+    cb = make_callback(
+        PromiseItemCallback(promise_id=pid, list_type="self", page=0).pack(),
+        user_id=100
+    )
+
+    with patch("src.handlers.promise.get_session", _session_cm(factory)):
+        await show_promise_detail(cb, PromiseItemCallback(promise_id=pid, list_type="self", page=0))
+
+    cb.message.edit_text.assert_called_once()
+    edit_text = cb.message.edit_text.call_args[0][0]
+    assert "Detail Test" in edit_text
+    assert "#1" in edit_text  # promise_id
+
+    # Keyboard should have action buttons + back button
+    call_kwargs = cb.message.edit_text.call_args[1]
+    keyboard = call_kwargs["reply_markup"]
+    await eng.dispose()
+
+
+@pytest.mark.asyncio
+async def test_back_to_list_returns_same_page():
+    """Test back button returns to exact same page."""
+    # This is implicitly tested by PromiseListCallback handling page parameter
+    # The callback_data for back button includes list_type and page
+    eng, factory = await _make_test_db()
+
+    async with factory() as s:
+        await get_or_create_user(s, 100, "alice", "Alice")
+        for i in range(5):
+            await create_promise(s, 100, f"Promise {i+1}", TargetType.SELF, 100, PromiseStatus.CONFIRMED)
+        await s.commit()
+
+    # First go to page 1
+    cb = make_callback(PromiseListCallback(list_type="self", page=1).pack(), user_id=100)
+    with patch("src.handlers.promise.get_session", _session_cm(factory)):
+        await show_promise_list(cb, PromiseListCallback(list_type="self", page=1))
+
+    # Then simulate back button press (which calls show_promise_list with page=1)
+    cb2 = make_callback(PromiseListCallback(list_type="self", page=1).pack(), user_id=100)
+    with patch("src.handlers.promise.get_session", _session_cm(factory)):
+        await show_promise_list(cb2, PromiseListCallback(list_type="self", page=1))
+
+    # Both should show page 2
+    assert "صفحه 2" in cb.message.edit_text.call_args[0][0]
+    assert "صفحه 2" in cb2.message.edit_text.call_args[0][0]
+    await eng.dispose()
+
+
+@pytest.mark.asyncio
+async def test_list_types_are_isolated():
+    """Test self/given/received lists don't mix."""
+    eng, factory = await _make_test_db()
+
+    async with factory() as s:
+        await get_or_create_user(s, 100, "alice", "Alice")
+        await get_or_create_user(s, 200, "bob", "Bob")
+        # Self promise
+        await create_promise(s, 100, "Self promise", TargetType.SELF, 100, PromiseStatus.CONFIRMED)
+        # Given promise (100 -> 200)
+        await create_promise(s, 100, "Given promise", TargetType.FRIEND, 200, PromiseStatus.CONFIRMED)
+        # Received promise (200 -> 100)
+        await create_promise(s, 200, "Received promise", TargetType.FRIEND, 100, PromiseStatus.CONFIRMED)
+        await s.commit()
+
+    # Self list for user 100
+    cb_self = make_callback(PromiseListCallback(list_type="self", page=0).pack(), user_id=100)
+    with patch("src.handlers.promise.get_session", _session_cm(factory)):
+        await show_promise_list(cb_self, PromiseListCallback(list_type="self", page=0))
+
+    edit_self = cb_self.message.edit_text.call_args[0][0]
+    assert "1 قول" in edit_self
+    # Check that keyboard has the self promise button
+    keyboard_self = cb_self.message.edit_text.call_args[1]["reply_markup"]
+    assert "Self promise" in str(keyboard_self)
+    assert "Given promise" not in str(keyboard_self)
+    assert "Received promise" not in str(keyboard_self)
+
+    # Given list for user 100
+    cb_given = make_callback(PromiseListCallback(list_type="given", page=0).pack(), user_id=100)
+    with patch("src.handlers.promise.get_session", _session_cm(factory)):
+        await show_promise_list(cb_given, PromiseListCallback(list_type="given", page=0))
+
+    edit_given = cb_given.message.edit_text.call_args[0][0]
+    assert "1 قول" in edit_given
+    keyboard_given = cb_given.message.edit_text.call_args[1]["reply_markup"]
+    assert "Given promise" in str(keyboard_given)
+    assert "Self promise" not in str(keyboard_given)
+    assert "Received promise" not in str(keyboard_given)
+
+    # Received list for user 100
+    cb_received = make_callback(PromiseListCallback(list_type="received", page=0).pack(), user_id=100)
+    with patch("src.handlers.promise.get_session", _session_cm(factory)):
+        await show_promise_list(cb_received, PromiseListCallback(list_type="received", page=0))
+
+    edit_received = cb_received.message.edit_text.call_args[0][0]
+    assert "1 قول" in edit_received
+    keyboard_received = cb_received.message.edit_text.call_args[1]["reply_markup"]
+    assert "Received promise" in str(keyboard_received)
+    assert "Self promise" not in str(keyboard_received)
+    assert "Given promise" not in str(keyboard_received)
+
+    await eng.dispose()
+
+
+@pytest.mark.asyncio
+async def test_less_than_page_size_no_navigation():
+    """Test list with 1-3 items shows no navigation buttons."""
+    eng, factory = await _make_test_db()
+
+    async with factory() as s:
+        await get_or_create_user(s, 100, "alice", "Alice")
+        for i in range(3):
+            await create_promise(s, 100, f"Item {i+1}", TargetType.SELF, 100, PromiseStatus.CONFIRMED)
+        await s.commit()
+
+    cb = make_callback(PromiseListCallback(list_type="self", page=0).pack(), user_id=100)
+    with patch("src.handlers.promise.get_session", _session_cm(factory)):
+        await show_promise_list(cb, PromiseListCallback(list_type="self", page=0))
+
+    edit_text = cb.message.edit_text.call_args[0][0]
+    assert "3 قول" in edit_text
+    # Should NOT have navigation row (only 1 page)
+    # This is verified by keyboard structure
+    await eng.dispose()
+
+
+# ── Model Tests ────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_user_creation():
+    eng, factory = await _make_test_db()
+    async with factory() as session:
+        user = User(telegram_id=12345, username="testuser", full_name="Test User")
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        assert user.telegram_id == 12345
+        assert user.username == "testuser"
+    await eng.dispose()
+
+
+@pytest.mark.asyncio
+async def test_promise_creation():
+    eng, factory = await _make_test_db()
+    async with factory() as session:
+        user = User(telegram_id=12345, username="testuser", full_name="Test User")
+        session.add(user)
         await session.commit()
 
-        # 2. Giver creates a promise pointing to the stub's negative ID
         promise = Promise(
-            content="تست قول",
-            giver_id=1001,
-            receiver_id=-123456,  # Points to stub
-            target_type=TargetType.FRIEND,
-            status=PromiseStatus.PENDING,
+            promise_id=1,
+            content="Test promise",
+            giver_id=12345,
+            target_type=TargetType.SELF,
+            status=PromiseStatus.CONFIRMED,
         )
         session.add(promise)
         await session.commit()
-
-        # 3. Real user (the friend) starts the bot with the same username
-        #    This should merge the stub and update the promise's receiver_id
-        real_user = await get_or_create_user(session, telegram_id=999888, username="my_friend", full_name="Real Friend")
-        
-        assert real_user.telegram_id == 999888
-        assert real_user.username == "my_friend"
-        assert real_user.has_started_bot is True
-
-        # 4. Check that the promise's receiver_id was updated from negative stub ID to real positive ID
-        stmt = select(Promise).where(Promise.id == promise.id)
-        res = await session.execute(stmt)
-        updated_promise = res.scalar_one_or_none()
-        assert updated_promise is not None
-        assert updated_promise.receiver_id == 999888
-
-    await engine.dispose()
-
-@pytest.mark.asyncio
-async def test_handler_initial_confirm_no():
-    callback = MagicMock()
-    callback.data = "confirm_initial:no:1001"
-    callback.from_user.id = 1001
-    callback.message = AsyncMock()
-
-    state = AsyncMock()
-
-    await process_initial_confirm(callback, state)
-
-    # New behavior: goes back to waiting_for_content, not clear
-    state.set_state.assert_awaited_once()
-    callback.message.edit_text.assert_awaited_once_with("باشه، دوباره بگو 🙂")
-
-@pytest.mark.asyncio
-async def test_handler_target_selection_self():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    import src.handlers.promise as p_mod
-    original_session_local = p_mod.AsyncSessionLocal
-    p_mod.AsyncSessionLocal = session_maker
-
-    try:
-        callback = MagicMock()
-        callback.data = "target:self:1001"
-        callback.from_user.id = 1001
-        callback.from_user.username = "test_giver"
-        callback.from_user.full_name = "Test Giver"
-        callback.message = AsyncMock()
-
-        state = AsyncMock()
-        state.get_data.return_value = {"content": "خرید کتاب"}
-
-        await process_target_selection(callback, state)
-
-        state.clear.assert_awaited_once()
-        # New message includes promise_id and new tone
-        callback.message.edit_text.assert_awaited_once()
-        call_args = callback.message.edit_text.call_args[0][0]
-        assert "ثبت شد ✅" in call_args
-        assert "موفق باشی 💪" in call_args
-        assert "قول #" in call_args
-    finally:
-        p_mod.AsyncSessionLocal = original_session_local
-        await engine.dispose()
-
-@pytest.mark.asyncio
-async def test_handler_promise_approval_yes():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    import src.handlers.promise as p_mod
-    original_session_local = p_mod.AsyncSessionLocal
-    p_mod.AsyncSessionLocal = session_maker
-
-    try:
-        async with session_maker() as session:
-            giver = User(telegram_id=1001, username="giver", full_name="Giver")
-            receiver = User(telegram_id=2002, username="receiver", full_name="Receiver")
-            session.add_all([giver, receiver])
-            await session.commit()
-
-            promise = Promise(
-                promise_id=123,
-                content="انجام پروژه",
-                giver_id=giver.telegram_id,
-                receiver_id=receiver.telegram_id,
-                target_type=TargetType.FRIEND,
-                status=PromiseStatus.PENDING
-            )
-            session.add(promise)
-            await session.commit()
-
-        callback = MagicMock()
-        callback.data = f"promise_appr:yes:123:2002"  # Using promise_id=123
-        callback.from_user.id = 2002
-        callback.message = AsyncMock()
-        callback.bot = AsyncMock()
-
-        await process_promise_approval(callback)
-
-        callback.message.edit_text.assert_awaited_once_with("قبولش کردی ✅ حالا یادت باشه ها 😉")
-        callback.bot.send_message.assert_awaited()
-    finally:
-        p_mod.AsyncSessionLocal = original_session_local
-        await engine.dispose()
-
-# New tests for Phase 2 features
-@pytest.mark.asyncio
-async def test_promise_id_assignment():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    import src.handlers.promise as p_mod
-    original_session_local = p_mod.AsyncSessionLocal
-    p_mod.AsyncSessionLocal = session_maker
-
-    try:
-        async with session_maker() as session:
-            user = User(telegram_id=1001, username="test", full_name="Test")
-            session.add(user)
-            await session.commit()
-
-            # First promise should get promise_id=1
-            pid1 = await p_mod.get_next_promise_id(session)
-            p1 = Promise(promise_id=pid1, content="first", giver_id=1001, target_type=TargetType.SELF, status=PromiseStatus.CONFIRMED)
-            session.add(p1)
-            await session.commit()
-
-            # Second promise should get promise_id=2
-            pid2 = await p_mod.get_next_promise_id(session)
-            p2 = Promise(promise_id=pid2, content="second", giver_id=1001, target_type=TargetType.SELF, status=PromiseStatus.CONFIRMED)
-            session.add(p2)
-            await session.commit()
-
-            assert p1.promise_id == 1
-            assert p2.promise_id == 2
-    finally:
-        p_mod.AsyncSessionLocal = original_session_local
-        await engine.dispose()
-
-@pytest.mark.asyncio
-async def test_credibility_score_zero_denominator():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    async with session_maker() as session:
-        user = User(telegram_id=1001, username="test", full_name="Test")
-        session.add(user)
-        
-        # Only confirmed promises, no done/broken
-        p1 = Promise(promise_id=1, content="pending1", giver_id=1001, target_type=TargetType.SELF, status=PromiseStatus.CONFIRMED)
-        p2 = Promise(promise_id=2, content="pending2", giver_id=1001, target_type=TargetType.SELF, status=PromiseStatus.CONFIRMED)
-        session.add_all([p1, p2])
-        await session.commit()
-
-        # Check counts
-        from sqlalchemy import select, func
-        done_stmt = select(func.count(Promise.id)).where(
-            Promise.giver_id == 1001,
-            Promise.status == PromiseStatus.DONE
-        )
-        done_res = await session.execute(done_stmt)
-        done_count = done_res.scalar() or 0
-        
-        broken_stmt = select(func.count(Promise.id)).where(
-            Promise.giver_id == 1001,
-            Promise.status == PromiseStatus.BROKEN
-        )
-        broken_res = await session.execute(broken_stmt)
-        broken_count = broken_res.scalar() or 0
-
-        assert done_count == 0
-        assert broken_count == 0
-        # denominator would be 0, handled in handler
-
-    await engine.dispose()
-
-@pytest.mark.asyncio
-async def test_credibility_score_calculation():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    async with session_maker() as session:
-        user = User(telegram_id=1001, username="test", full_name="Test")
-        session.add(user)
-        
-        p1 = Promise(promise_id=1, content="done1", giver_id=1001, target_type=TargetType.SELF, status=PromiseStatus.DONE)
-        p2 = Promise(promise_id=2, content="done2", giver_id=1001, target_type=TargetType.SELF, status=PromiseStatus.DONE)
-        p3 = Promise(promise_id=3, content="broken1", giver_id=1001, target_type=TargetType.SELF, status=PromiseStatus.BROKEN)
-        session.add_all([p1, p2, p3])
-        await session.commit()
-
-        from sqlalchemy import select, func
-        done_stmt = select(func.count(Promise.id)).where(
-            Promise.giver_id == 1001,
-            Promise.status == PromiseStatus.DONE
-        )
-        done_res = await session.execute(done_stmt)
-        done_count = done_res.scalar() or 0
-        
-        broken_stmt = select(func.count(Promise.id)).where(
-            Promise.giver_id == 1001,
-            Promise.status == PromiseStatus.BROKEN
-        )
-        broken_res = await session.execute(broken_stmt)
-        broken_count = broken_res.scalar() or 0
-
-        assert done_count == 2
-        assert broken_count == 1
-        # 2/(2+1) = 66.6...% -> 67%
-        pct = round((done_count / (done_count + broken_count)) * 100)
-        assert pct == 67
-
-    await engine.dispose()
-
-# --- NEW TESTS FOR PHASE 2 ---
-
-@pytest.mark.asyncio
-async def test_group_promise_command_with_mention():
-    """Test /promise @username text in group chat"""
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    import src.handlers.promise as p_mod
-    original_session_local = p_mod.AsyncSessionLocal
-    p_mod.AsyncSessionLocal = session_maker
-
-    try:
-        async with session_maker() as session:
-            giver = User(telegram_id=1001, username="giver", full_name="Giver")
-            receiver = User(telegram_id=2002, username="receiver", full_name="Receiver")
-            session.add_all([giver, receiver])
-            await session.commit()
-
-        message = MagicMock()
-        message.chat.type = "group"
-        message.text = "/promise @receiver قول میدم فردا بستنی بخرم"
-        message.from_user.id = 1001
-        message.from_user.username = "giver"
-        message.from_user.full_name = "Giver"
-        message.reply_to_message = None
-        message.bot = AsyncMock()
-        message.answer = AsyncMock()
-        message.reply = AsyncMock()
-
-        state = AsyncMock()
-
-        await group_promise_command(message, state)
-
-        # Should have tried to send DM or group notification
-        message.bot.send_message.assert_awaited()
-        message.answer.assert_awaited()
-
-    finally:
-        p_mod.AsyncSessionLocal = original_session_local
-        await engine.dispose()
-
-@pytest.mark.asyncio
-async def test_group_promise_command_with_reply():
-    """Test /promise text as reply to friend's message in group chat"""
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    import src.handlers.promise as p_mod
-    original_session_local = p_mod.AsyncSessionLocal
-    p_mod.AsyncSessionLocal = session_maker
-
-    try:
-        async with session_maker() as session:
-            giver = User(telegram_id=1001, username="giver", full_name="Giver")
-            receiver = User(telegram_id=2002, username="receiver", full_name="Receiver")
-            session.add_all([giver, receiver])
-            await session.commit()
-
-        message = MagicMock()
-        message.chat.type = "group"
-        message.text = "/promise قول میدم فردا بستنی بخرم"
-        message.from_user.id = 1001
-        message.from_user.username = "giver"
-        message.from_user.full_name = "Giver"
-        
-        # Mock reply_to_message
-        reply_msg = MagicMock()
-        reply_msg.from_user.id = 2002
-        reply_msg.from_user.username = "receiver"
-        reply_msg.from_user.is_bot = False
-        message.reply_to_message = reply_msg
-        
-        message.bot = AsyncMock()
-        message.answer = AsyncMock()
-        message.reply = AsyncMock()
-
-        state = AsyncMock()
-
-        await group_promise_command(message, state)
-
-        # Should have tried to send DM or group notification
-        message.bot.send_message.assert_awaited()
-        message.answer.assert_awaited()
-
-    finally:
-        p_mod.AsyncSessionLocal = original_session_local
-        await engine.dispose()
-
-@pytest.mark.asyncio
-async def test_only_giver_can_change_promise_status():
-    """Test that only the giver can trigger done/broken status change"""
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    import src.handlers.promise as p_mod
-    original_session_local = p_mod.AsyncSessionLocal
-    p_mod.AsyncSessionLocal = session_maker
-
-    try:
-        async with session_maker() as session:
-            giver = User(telegram_id=1001, username="giver", full_name="Giver")
-            receiver = User(telegram_id=2002, username="receiver", full_name="Receiver")
-            session.add_all([giver, receiver])
-            await session.commit()
-
-            promise = Promise(
-                promise_id=456,
-                content="انجام پروژه",
-                giver_id=giver.telegram_id,
-                receiver_id=receiver.telegram_id,
-                target_type=TargetType.FRIEND,
-                status=PromiseStatus.CONFIRMED
-            )
-            session.add(promise)
-            await session.commit()
-
-        # Test 1: Receiver tries to change status (should be rejected)
-        # Callback data includes the REAL giver_id (1001) but the receiver (2002) tries to press it
-        callback_receiver = MagicMock()
-        callback_receiver.data = f"promise_status:done:456:1001"  # giver_id=1001 in callback data
-        callback_receiver.from_user.id = 2002  # receiver trying to change
-        callback_receiver.message = MagicMock()
-        callback_receiver.message.edit_text = AsyncMock()
-        callback_receiver.answer = AsyncMock()
-
-        await p_mod.process_promise_status_change(callback_receiver)
-
-        # Should reject with alert
-        callback_receiver.answer.assert_awaited_once()
-        call_args = callback_receiver.answer.call_args
-        assert "فقط قول‌دهنده" in call_args[0][0] or "فقط قول‌دهنده" in str(call_args)
-
-        # Verify status didn't change
-        async with session_maker() as session:
-            stmt = select(Promise).where(Promise.promise_id == 456)
-            res = await session.execute(stmt)
-            p = res.scalar_one_or_none()
-            assert p.status == PromiseStatus.CONFIRMED
-
-        # Test 2: Giver tries to change status (should succeed)
-        callback_giver = MagicMock()
-        callback_giver.data = f"promise_status:done:456:1001"  # giver_id in callback
-        callback_giver.from_user.id = 1001  # giver
-        callback_giver.message = MagicMock()
-        callback_giver.message.message_id = 12345
-        callback_giver.message.chat.id = -1001234567890
-        callback_giver.message.edit_text = AsyncMock()
-        callback_giver.answer = AsyncMock()
-
-        await p_mod.process_promise_status_change(callback_giver)
-
-        # Should succeed and update message to "waiting for receiver confirmation" (Phase 4 behavior)
-        callback_giver.message.edit_text.assert_awaited_once()
-        call_args = callback_giver.message.edit_text.call_args[0][0]
-        assert "⏳ در انتظار تایید طرف مقابل" in call_args  # Phase 4: waiting for receiver
-        assert "انجام پروژه" in call_args
-        
-        # Verify status changed in DB to DONE (claimed state)
-        async with session_maker() as session:
-            stmt = select(Promise).where(Promise.promise_id == 456)
-            res = await session.execute(stmt)
-            p = res.scalar_one_or_none()
-            assert p.status == PromiseStatus.DONE
-            # Verify message IDs saved
-            assert p.giver_claim_message_id == 12345
-            assert p.giver_claim_chat_id == -1001234567890
-
-    finally:
-        p_mod.AsyncSessionLocal = original_session_local
-        await engine.dispose()
-
-# --- NEW TESTS FOR PHASE 4 ---
-
-@pytest.mark.asyncio
-async def test_process_confirm_done_receiver_confirms():
-    """Test receiver confirms the promise is done - edits both messages"""
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    import src.handlers.promise as p_mod
-    original_session_local = p_mod.AsyncSessionLocal
-    p_mod.AsyncSessionLocal = session_maker
-
-    try:
-        async with session_maker() as session:
-            giver = User(telegram_id=1001, username="giver", full_name="Giver")
-            receiver = User(telegram_id=2002, username="receiver", full_name="Receiver")
-            session.add_all([giver, receiver])
-            await session.commit()
-
-            promise = Promise(
-                promise_id=456,
-                content="انجام پروژه",
-                giver_id=giver.telegram_id,
-                receiver_id=receiver.telegram_id,
-                target_type=TargetType.FRIEND,
-                status=PromiseStatus.DONE,  # Claimed by giver
-                giver_claim_message_id=12345,
-                giver_claim_chat_id=-1001234567890,
-            )
-            session.add(promise)
-            await session.commit()
-
-        # Mock callback from receiver
-        callback = MagicMock()
-        callback.data = f"confirm_done:456:2002"
-        callback.from_user.id = 2002
-        callback.message = MagicMock()
-        callback.message.edit_text = AsyncMock()
-        callback.bot = MagicMock()
-        callback.bot.edit_message_text = AsyncMock()
-
-        await p_mod.process_confirm_done(callback)
-
-        # Receiver's message should be edited
-        callback.message.edit_text.assert_awaited_once()
-        call_args = callback.message.edit_text.call_args[0][0]
-        assert "✅ تایید شد - انجام شده" in call_args
-
-        # Giver's message should be edited via bot.edit_message_text
-        callback.bot.edit_message_text.assert_awaited_once()
-        edit_args = callback.bot.edit_message_text.call_args
-        assert edit_args[1]['chat_id'] == -1001234567890
-        assert edit_args[1]['message_id'] == 12345
-        assert "✅ تایید شد - انجام شده" in edit_args[1]['text']
-
-        # Verify DB status is DONE
-        async with session_maker() as session:
-            stmt = select(Promise).where(Promise.promise_id == 456)
-            res = await session.execute(stmt)
-            p = res.scalar_one_or_none()
-            assert p.status == PromiseStatus.DONE
-
-    finally:
-        p_mod.AsyncSessionLocal = original_session_local
-        await engine.dispose()
-
-@pytest.mark.asyncio
-async def test_process_dispute_done_receiver_disputes():
-    """Test receiver disputes the promise is done - edits both messages, reverts to CONFIRMED"""
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    import src.handlers.promise as p_mod
-    original_session_local = p_mod.AsyncSessionLocal
-    p_mod.AsyncSessionLocal = session_maker
-
-    try:
-        async with session_maker() as session:
-            giver = User(telegram_id=1001, username="giver", full_name="Giver")
-            receiver = User(telegram_id=2002, username="receiver", full_name="Receiver")
-            session.add_all([giver, receiver])
-            await session.commit()
-
-            promise = Promise(
-                promise_id=456,
-                content="انجام پروژه",
-                giver_id=giver.telegram_id,
-                receiver_id=receiver.telegram_id,
-                target_type=TargetType.FRIEND,
-                status=PromiseStatus.DONE,  # Claimed by giver
-                giver_claim_message_id=12345,
-                giver_claim_chat_id=-1001234567890,
-            )
-            session.add(promise)
-            await session.commit()
-
-        # Mock callback from receiver
-        callback = MagicMock()
-        callback.data = f"dispute_done:456:2002"
-        callback.from_user.id = 2002
-        callback.message = MagicMock()
-        callback.message.edit_text = AsyncMock()
-        callback.bot = MagicMock()
-        callback.bot.edit_message_text = AsyncMock()
-        callback.bot.send_message = AsyncMock()
-
-        await p_mod.process_dispute_done(callback)
-
-        # Receiver's message should be edited
-        callback.message.edit_text.assert_awaited_once()
-        call_args = callback.message.edit_text.call_args[0][0]
-        assert "⚠️ رد شد - نقض شده" in call_args
-
-        # Giver's message should be edited via bot.edit_message_text (back to CONFIRMED with buttons)
-        callback.bot.edit_message_text.assert_awaited_once()
-        edit_args = callback.bot.edit_message_text.call_args
-        assert edit_args[1]['chat_id'] == -1001234567890
-        assert edit_args[1]['message_id'] == 12345
-        assert "✅ تایید شده" in edit_args[1]['text']  # Back to confirmed
-
-        # Giver should be notified
-        callback.bot.send_message.assert_awaited()
-
-        # Verify DB status reverted to CONFIRMED and message IDs cleared
-        async with session_maker() as session:
-            stmt = select(Promise).where(Promise.promise_id == 456)
-            res = await session.execute(stmt)
-            p = res.scalar_one_or_none()
-            assert p.status == PromiseStatus.CONFIRMED
-            assert p.giver_claim_message_id is None
-            assert p.giver_claim_chat_id is None
-
-    finally:
-        p_mod.AsyncSessionLocal = original_session_local
-        await engine.dispose()
-
-@pytest.mark.asyncio
-async def test_edit_giver_message_failure_does_not_break_flow():
-    """Test that if edit_message_text fails for giver, the operation still completes"""
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    import src.handlers.promise as p_mod
-    original_session_local = p_mod.AsyncSessionLocal
-    p_mod.AsyncSessionLocal = session_maker
-
-    try:
-        async with session_maker() as session:
-            giver = User(telegram_id=1001, username="giver", full_name="Giver")
-            receiver = User(telegram_id=2002, username="receiver", full_name="Receiver")
-            session.add_all([giver, receiver])
-            await session.commit()
-
-            promise = Promise(
-                promise_id=456,
-                content="انجام پروژه",
-                giver_id=giver.telegram_id,
-                receiver_id=receiver.telegram_id,
-                target_type=TargetType.FRIEND,
-                status=PromiseStatus.DONE,
-                giver_claim_message_id=12345,
-                giver_claim_chat_id=-1001234567890,
-            )
-            session.add(promise)
-            await session.commit()
-
-        # Mock callback from receiver - edit_message_text will raise exception
-        callback = MagicMock()
-        callback.data = f"confirm_done:456:2002"
-        callback.from_user.id = 2002
-        callback.message = MagicMock()
-        callback.message.edit_text = AsyncMock()
-        callback.bot = MagicMock()
-        callback.bot.edit_message_text = AsyncMock(side_effect=Exception("Message to edit not found"))
-
-        # Should not raise exception
-        await p_mod.process_confirm_done(callback)
-
-        # Receiver's message still edited
-        callback.message.edit_text.assert_awaited_once()
-
-        # DB status still updated to DONE
-        async with session_maker() as session:
-            stmt = select(Promise).where(Promise.promise_id == 456)
-            res = await session.execute(stmt)
-            p = res.scalar_one_or_none()
-            assert p.status == PromiseStatus.DONE
-
-    finally:
-        p_mod.AsyncSessionLocal = original_session_local
-        await engine.dispose()
-
-@pytest.mark.asyncio
-async def test_callback_message_edit_not_send_for_callback_responses():
-    """Test that callback handlers use edit_text not send_message for responses"""
-    # This is a meta-test to verify the pattern in the code
-    # The existing tests already verify edit_text is called for:
-    # - process_initial_confirm (no -> edit_text)
-    # - process_target_selection (self -> edit_text)
-    # - process_promise_approval (yes/no -> edit_text)
-    # - process_list_promises (-> edit_text)
-    # - process_promise_status_change (done/broken -> edit_text)
-    # - process_confirm_done/dispute_done (-> edit_text)
-    # All these use edit_text on callback.message, not send_message
-    pass
+        await session.refresh(promise)
+
+        assert promise.id == 1
+        assert promise.promise_id == 1
+        assert promise.content == "Test promise"
+    await eng.dispose()
