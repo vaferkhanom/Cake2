@@ -6,6 +6,7 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+import html
 
 import pytest
 import pytest_asyncio
@@ -815,4 +816,185 @@ async def test_promise_creation():
         assert promise.id == 1
         assert promise.promise_id == 1
         assert promise.content == "Test promise"
+    await eng.dispose()
+
+
+# ── Phase 6: escape_html Tests ──────────────────────────────────
+
+def test_escape_html_escapes_tags():
+    """HTML tags in user content should be escaped."""
+    from src.utils.format import escape_html
+    result = escape_html('<script>alert("xss")</script>')
+    assert result == "&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;"
+    assert "<script>" not in result
+
+
+def test_escape_html_preserves_normal_text():
+    """Normal text without HTML should pass through unchanged."""
+    from src.utils.format import escape_html
+    result = escape_html("قول عادی بدون تگ")
+    assert result == "قول عادی بدون تگ"
+
+
+def test_escape_html_blockquote_safety():
+    """Content inside blockquote tags should not break out."""
+    from src.utils.format import escape_html
+    content = " </blockquote> <b>bold injection</b> "
+    escaped = escape_html(content)
+    assert "</blockquote>" not in escaped
+    assert "<b>" not in escaped
+
+
+# ── Phase 6: Back Button Tests ──────────────────────────────────
+
+def test_promise_list_keyboard_has_back_button():
+    """Promise list keyboard should always have a back-to-menu button."""
+    from src.keyboards.inline import get_promise_list_keyboard
+    eng, factory_eng = None, None
+
+    # Need at least one promise
+    async def _run():
+        eng, factory = await _make_test_db()
+        async with factory() as s:
+            await get_or_create_user(s, 100, "alice", "Alice")
+            await create_promise(s, 100, "Test promise", TargetType.SELF, 100, PromiseStatus.CONFIRMED)
+            await s.commit()
+
+        async with factory() as s:
+            from sqlalchemy import select
+            stmt = select(Promise).where(Promise.giver_id == 100)
+            res = await s.execute(stmt)
+            promises = list(res.scalars().all())
+
+        kb = get_promise_list_keyboard(promises, "self", 0, 1)
+        kb_str = str(kb)
+        assert "بازگشت به منوی اصلی" in kb_str
+        assert "main:back" in kb_str
+        await eng.dispose()
+
+    import asyncio
+    asyncio.run(_run())
+
+
+# ── Phase 6: Edit-Message Accept/Reject Tests ──────────────────
+
+@pytest.mark.asyncio
+async def test_receiver_accept_edits_giver_message():
+    """When giver_pending fields exist, accept should edit the giver's message instead of sending new."""
+    eng, factory = await _make_test_db()
+
+    async with factory() as s:
+        await get_or_create_user(s, 100, "alice", "Alice")
+        await get_or_create_user(s, 200, "bob", "Bob")
+        p = await create_promise(s, 100, "test", TargetType.FRIEND, 200, PromiseStatus.PENDING)
+        pid = p.id
+        # Set pending message fields
+        p.giver_pending_message_id = 11111
+        p.giver_pending_chat_id = 100
+        await s.commit()
+
+    cb_data = ReceiverConfirmCallback(promise_id=pid, action="accept")
+    cb = make_callback(cb_data.pack(), user_id=200, full_name="Bob")
+
+    with patch("src.handlers.promise.get_session", _session_cm(factory)):
+        await promise_accepted(cb, cb_data)
+
+    # Should edit the giver's pending message
+    cb.bot.edit_message_text.assert_called_once()
+    edit_kwargs = cb.bot.edit_message_text.call_args[1]
+    assert edit_kwargs["chat_id"] == 100
+    assert edit_kwargs["message_id"] == 11111
+    assert "تایید کرد" in edit_kwargs["text"]
+    assert edit_kwargs["reply_markup"] is not None  # claim_done_keyboard present
+
+    # Should NOT send a new message (edit succeeded)
+    cb.bot.send_message.assert_not_called()
+    await eng.dispose()
+
+
+@pytest.mark.asyncio
+async def test_receiver_accept_fallback_when_edit_fails():
+    """When edit fails, accept should fallback to send_message."""
+    eng, factory = await _make_test_db()
+
+    async with factory() as s:
+        await get_or_create_user(s, 100, "alice", "Alice")
+        await get_or_create_user(s, 200, "bob", "Bob")
+        p = await create_promise(s, 100, "test", TargetType.FRIEND, 200, PromiseStatus.PENDING)
+        pid = p.id
+        p.giver_pending_message_id = 11111
+        p.giver_pending_chat_id = 100
+        await s.commit()
+
+    cb_data = ReceiverConfirmCallback(promise_id=pid, action="accept")
+    cb = make_callback(cb_data.pack(), user_id=200, full_name="Bob")
+
+    # Make edit_message_text raise an error to trigger fallback
+    cb.bot.edit_message_text = AsyncMock(side_effect=Exception("Message not found"))
+
+    with patch("src.handlers.promise.get_session", _session_cm(factory)):
+        await promise_accepted(cb, cb_data)
+
+    # Edit failed, so fallback to send_message
+    cb.bot.send_message.assert_called_once()
+    send_kwargs = cb.bot.send_message.call_args[1]
+    assert send_kwargs["chat_id"] == 100
+    assert "تایید کرد" in send_kwargs["text"]
+    assert send_kwargs["reply_markup"] is not None  # claim_done_keyboard in fallback too
+    await eng.dispose()
+
+
+@pytest.mark.asyncio
+async def test_receiver_reject_edits_giver_message():
+    """When giver_pending fields exist, reject should edit the giver's message."""
+    eng, factory = await _make_test_db()
+
+    async with factory() as s:
+        await get_or_create_user(s, 100, "alice", "Alice")
+        await get_or_create_user(s, 200, "bob", "Bob")
+        p = await create_promise(s, 100, "reject me", TargetType.FRIEND, 200, PromiseStatus.PENDING)
+        pid = p.id
+        p.giver_pending_message_id = 22222
+        p.giver_pending_chat_id = 100
+        await s.commit()
+
+    cb_data = ReceiverConfirmCallback(promise_id=pid, action="reject")
+    cb = make_callback(cb_data.pack(), user_id=200, full_name="Bob")
+
+    with patch("src.handlers.promise.get_session", _session_cm(factory)):
+        await promise_rejected(cb, cb_data)
+
+    # Should edit the giver's pending message
+    cb.bot.edit_message_text.assert_called_once()
+    edit_kwargs = cb.bot.edit_message_text.call_args[1]
+    assert edit_kwargs["chat_id"] == 100
+    assert edit_kwargs["message_id"] == 22222
+    assert "رد کرد" in edit_kwargs["text"]
+    await eng.dispose()
+
+
+@pytest.mark.asyncio
+async def test_receiver_reject_fallback_when_no_pending_fields():
+    """When no pending fields exist, reject should send a new message."""
+    eng, factory = await _make_test_db()
+
+    async with factory() as s:
+        await get_or_create_user(s, 100, "alice", "Alice")
+        await get_or_create_user(s, 200, "bob", "Bob")
+        p = await create_promise(s, 100, "reject me", TargetType.FRIEND, 200, PromiseStatus.PENDING)
+        pid = p.id
+        # No giver_pending fields set (old promise)
+        await s.commit()
+
+    cb_data = ReceiverConfirmCallback(promise_id=pid, action="reject")
+    cb = make_callback(cb_data.pack(), user_id=200, full_name="Bob")
+
+    with patch("src.handlers.promise.get_session", _session_cm(factory)):
+        await promise_rejected(cb, cb_data)
+
+    # Should send a new message since no pending fields
+    cb.bot.send_message.assert_called_once()
+    send_kwargs = cb.bot.send_message.call_args[1]
+    assert send_kwargs["chat_id"] == 100
+    assert "رد کرد" in send_kwargs["text"]
     await eng.dispose()

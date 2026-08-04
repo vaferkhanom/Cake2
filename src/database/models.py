@@ -113,6 +113,10 @@ class Promise(Base):
     giver_claim_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     giver_claim_chat_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
 
+    # Phase 6: For edit-message flow in accept/reject
+    giver_pending_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    giver_pending_chat_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+
     # Relationships
     giver: Mapped["User"] = relationship(
         "User", back_populates="promises_given", foreign_keys=[giver_id]

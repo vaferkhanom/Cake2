@@ -4,6 +4,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.filters.callback_data import CallbackData
 from src.config import settings
+from src.utils.format import escape_html
 
 
 # ── Callback Data Classes ──────────────────────────────────
@@ -105,16 +106,18 @@ def format_promise_card(promise, user_id: int) -> str:
     
     lines = [
         f"<b>#{promise.promise_id or promise.id}</b> · {emoji} {text}",
-        f"💬 {promise.content}",
+        f"💬 {escape_html(promise.content)}",
     ]
     
     if promise.target_type.value == "self":
         lines.append("👤 برای: خودم")
     else:
         if promise.giver_id == user_id:
-            lines.append(f"👤 به: {promise.receiver.display_name if promise.receiver else 'دوست'}")
+            receiver_name = escape_html(promise.receiver.display_name) if promise.receiver else "دوست"
+            lines.append(f"👤 به: {receiver_name}")
         else:
-            lines.append(f"👤 از: {promise.giver.display_name if promise.giver else 'دوست'}")
+            giver_name = escape_html(promise.giver.display_name) if promise.giver else "دوست"
+            lines.append(f"👤 از: {giver_name}")
     
     lines.append(f"🗓 {format_jalali_date(promise.created_at)}")
     
@@ -136,20 +139,6 @@ def get_status_button_emoji(status) -> str:
     elif status == PromiseStatus.EXPIRED:
         return "⏰"
     return "⏳"
-
-
-# ── Main Menu ──────────────────────────────────────────────
-
-def get_main_reply_keyboard():
-    from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-    from aiogram.utils.keyboard import ReplyKeyboardBuilder
-    
-    builder = ReplyKeyboardBuilder()
-    builder.add(KeyboardButton(text=settings.MENU_OPTIONS["CREATE_PROMISE"]))
-    builder.add(KeyboardButton(text=settings.MENU_OPTIONS["LIST_PROMISES"]))
-    builder.add(KeyboardButton(text=settings.MENU_OPTIONS["PROFILE"]))
-    builder.adjust(2, 1)
-    return builder.as_markup(resize_keyboard=True)
 
 
 # ── FSM Keyboards ──────────────────────────────────────────
@@ -266,6 +255,12 @@ def get_promise_list_keyboard(promises: list, list_type: str, page: int, total_c
             )
         if nav_buttons:
             builder.row(*nav_buttons)
+    
+    # Fixed back-to-menu row (always present)
+    builder.row(InlineKeyboardButton(
+        text="🔙 بازگشت به منوی اصلی",
+        callback_data="main:back",
+    ))
     
     return builder.as_markup()
 

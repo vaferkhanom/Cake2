@@ -1,10 +1,16 @@
 """Utility functions for formatting."""
 
+import html
 import jdatetime
 import zoneinfo
 from datetime import datetime, timezone
 
 IRAN_TZ = zoneinfo.ZoneInfo("Asia/Tehran")
+
+
+def escape_html(text: str) -> str:
+    """Escape user-provided text for safe HTML rendering in Telegram."""
+    return html.escape(text)
 
 
 def format_jalali_date(dt: datetime, include_time: bool = True) -> str:
@@ -24,5 +30,5 @@ def format_jalali_short(dt: datetime) -> str:
 
 
 def make_mention(user_id: int, name: str) -> str:
-    """Create a Telegram mention for a user."""
-    return f'<a href="tg://user?id={user_id}">{name}</a>'
+    """Create a Telegram mention for a user (HTML-safe)."""
+    return f'<a href="tg://user?id={user_id}">{escape_html(name)}</a>'
