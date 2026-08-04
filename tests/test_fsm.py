@@ -12,13 +12,13 @@ import pytest_asyncio
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy import select
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.database.models import Base, Promise, PromiseStatus, TargetType, User
 from src.database.session import create_promise, get_or_create_user
 from src.handlers.promise import (
-    new_promise_start,
     promise_content_received,
     promise_confirmed,
     promise_edit,
@@ -27,17 +27,24 @@ from src.handlers.promise import (
     promise_accepted,
     promise_rejected,
     _process_friend,
-    show_my_promises_menu,
     show_promise_list,
     show_promise_detail,
+    claim_done,
+    confirm_done,
+    dispute_done,
+    mark_broken,
+    resolve_dispute,
+    main_create_promise,
+    main_show_my_promises_menu,
 )
 from src.keyboards.inline import (
     ConfirmPromiseCallback,
     ReceiverConfirmCallback,
     TargetCallback,
-    PromiseStatusCallback,
     ClaimDoneCallback,
     ReceiverConfirmDoneCallback,
+    BrokenCallback,
+    ResolveDisputeCallback,
     DeadlineCallback,
     PromiseListCallback,
     PromiseItemCallback,
@@ -81,15 +88,15 @@ def _make_fsm(storage=None):
 
 # ── Tests ──────────────────────────────────────────────
 
-@pytest.mark.asyncio
+@ pytest.mark.asyncio
 async def test_start_enters_fsm():
     state = _make_fsm()
-    msg = make_message(text="🤝 ثبت یه قول جدید")
-    await new_promise_start(msg, state)
+    cb = make_callback("main:create", user_id=100)
+    await main_create_promise(cb, state)
     assert await state.get_state() == PromiseStates.waiting_for_content
 
 
-@pytest.mark.asyncio
+@ pytest.mark.asyncio
 async def test_content_received():
     state = _make_fsm()
     await state.set_state(PromiseStates.waiting_for_content)
@@ -140,8 +147,8 @@ async def test_target_self_creates_confirmed():
         await target_self(cb, state)
 
     assert await state.get_state() is None
-    cb.message.answer.assert_called_once()
-    msg_text = cb.message.answer.call_args[0][0]
+    cb.message.edit_text.assert_called_once()
+    msg_text = cb.message.edit_text.call_args[0][0]
     assert "#1" in msg_text
 
     async with factory() as s:
@@ -323,18 +330,17 @@ async def test_friend_numeric_id_not_in_db():
 
 # ── Phase 5: Promise List Grid Tests ──────────────────
 
-@pytest.mark.asyncio
+@ pytest.mark.asyncio
 async def test_show_my_promises_menu():
     """Test that main menu shows 3 options."""
-    msg = make_message(text="📋 قول‌های من")
-    await show_my_promises_menu(msg)
-    msg.answer.assert_called_once()
-    # Should show inline keyboard with 3 buttons
-    call_kwargs = msg.answer.call_args[1]
+    cb = make_callback("main:list", user_id=100)
+    await main_show_my_promises_menu(cb)
+    cb.message.edit_text.assert_called_once()
+    call_kwargs = cb.message.edit_text.call_args[1]
     assert "reply_markup" in call_kwargs
 
 
-@pytest.mark.asyncio
+@ pytest.mark.asyncio
 async def test_self_list_empty():
     eng, factory = await _make_test_db()
     cb = make_callback(PromiseListCallback(list_type="self", page=0).pack(), user_id=100)
@@ -564,7 +570,215 @@ async def test_less_than_page_size_no_navigation():
     await eng.dispose()
 
 
-# ── Model Tests ────────────────────────────────────────
+# ── Phase 3: Stub User Merge Validation ────────────────────
+
+@pytest.mark.asyncio
+async def test_stub_user_merge_on_deep_link():
+    """Test end-to-end stub user merge:
+    - User A creates promise for user B (not started bot) via friend flow (username) -> stub created with negative ID
+    - User B starts bot via deep link ?start=promise_{id}
+    - Promise should immediately be available for B to accept/reject
+    """
+    eng, factory = await _make_test_db()
+    
+    # Simulate the friend flow: user A creates promise for @bob (who hasn't started bot)
+    # This goes through _process_friend which calls create_stub_user when user not found by username
+    from src.handlers.promise import _process_friend
+    from src.states.promise import PromiseStates
+    
+    state = _make_fsm()
+    await state.set_state(PromiseStates.waiting_for_friend_id)
+    await state.update_data(content="Test promise for B")
+    
+    # User A (100) creates promise for @bob (using username, not forward)
+    msg = make_message(text="@bob", user_id=100)
+    
+    with patch("src.handlers.promise.get_session", _session_cm(factory)):
+        await _process_friend(msg, state, username="bob")
+    
+    # Verify promise was created and stub user exists with negative ID
+    async with factory() as s:
+        from sqlalchemy import select
+        stmt = select(Promise).where(Promise.giver_id == 100)
+        res = await s.execute(stmt)
+        promises = res.scalars().all()
+        assert len(promises) == 1
+        p = promises[0]
+        pid = p.id
+        assert p.status == PromiseStatus.PENDING
+        assert p.receiver_id < 0  # stub user has negative ID
+        
+        # Verify stub user was created
+        stmt = select(User).where(User.telegram_id == p.receiver_id)
+        res = await s.execute(stmt)
+        stub_user = res.scalar_one()
+        assert stub_user.telegram_id < 0
+        assert stub_user.username == "bob"
+        assert stub_user.has_started_bot is False
+    
+    # Now simulate user B (999) starting the bot with deep link
+    # cmd_start should merge the stub and update promise receiver_id
+    from src.handlers.promise import cmd_start
+    from aiogram.filters import CommandObject
+    
+    state = _make_fsm()
+    msg = make_message(text=f"/start promise_{pid}", user_id=999)
+    msg.from_user.username = "bob"
+    msg.from_user.full_name = "Bob"
+    
+    command = CommandObject(args=f"promise_{pid}", prefix="/")
+    
+    with patch("src.handlers.promise.get_session", _session_cm(factory)):
+        await cmd_start(msg, command, state)
+    
+    # Verify promise now has correct receiver_id (999) and is still PENDING
+    async with factory() as s:
+        stmt = select(Promise).where(Promise.id == pid)
+        res = await s.execute(stmt)
+        p = res.scalar_one()
+        assert p.receiver_id == 999
+        assert p.status == PromiseStatus.PENDING
+        
+        # Verify user 999 now exists with correct ID (stub merged)
+        stmt = select(User).where(User.telegram_id == 999)
+        res = await s.execute(stmt)
+        user_b = res.scalar_one()
+        assert user_b.telegram_id == 999
+        assert user_b.username == "bob"
+        assert user_b.has_started_bot is True
+    
+    await eng.dispose()
+
+
+# ── Phase 3: Scoring Tests ───────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_apply_done_score_self_promise_no_score():
+    """Self promises should not give any score."""
+    eng, factory = await _make_test_db()
+    
+    async with factory() as s:
+        await get_or_create_user(s, 100, "alice", "Alice")
+        p = await create_promise(s, 100, "Self promise", TargetType.SELF, 100, PromiseStatus.CONFIRMED)
+        await s.commit()
+    
+    from src.services.scoring import apply_done_score
+    
+    async with factory() as s:
+        await apply_done_score(s, 100, p)
+        # Check user score didn't change
+        stmt = select(User).where(User.telegram_id == 100)
+        res = await s.execute(stmt)
+        user = res.scalar_one()
+        assert user.score == 0
+    
+    await eng.dispose()
+
+
+@pytest.mark.asyncio
+async def test_apply_done_score_friend_promise_base_score():
+    """Friend promises should give base score."""
+    eng, factory = await _make_test_db()
+    
+    async with factory() as s:
+        await get_or_create_user(s, 100, "alice", "Alice")
+        await get_or_create_user(s, 200, "bob", "Bob")
+        p = await create_promise(s, 100, "Friend promise", TargetType.FRIEND, 200, PromiseStatus.CONFIRMED)
+        await s.commit()
+    
+    from src.services.scoring import apply_done_score
+    
+    async with factory() as s:
+        await apply_done_score(s, 100, p)
+        stmt = select(User).where(User.telegram_id == 100)
+        res = await s.execute(stmt)
+        user = res.scalar_one()
+        assert user.score == 10  # SCORE_DONE_BASE
+        assert user.current_streak == 1
+    
+    await eng.dispose()
+
+
+@pytest.mark.asyncio
+async def test_apply_broken_score_self_promise_no_penalty():
+    """Self promises should not give penalty for broken."""
+    eng, factory = await _make_test_db()
+    
+    async with factory() as s:
+        await get_or_create_user(s, 100, "alice", "Alice")
+        p = await create_promise(s, 100, "Self promise", TargetType.SELF, 100, PromiseStatus.CONFIRMED)
+        await s.commit()
+    
+    from src.services.scoring import apply_broken_score
+    
+    async with factory() as s:
+        await apply_broken_score(s, 100, p)
+        stmt = select(User).where(User.telegram_id == 100)
+        res = await s.execute(stmt)
+        user = res.scalar_one()
+        assert user.score == 0
+        assert user.current_streak == 0  # streak should be 0
+    
+    await eng.dispose()
+
+
+@pytest.mark.asyncio
+async def test_apply_broken_score_friend_promise_penalty():
+    """Friend promises should give penalty for broken."""
+    eng, factory = await _make_test_db()
+    
+    async with factory() as s:
+        await get_or_create_user(s, 100, "alice", "Alice")
+        await get_or_create_user(s, 200, "bob", "Bob")
+        p = await create_promise(s, 100, "Friend promise", TargetType.FRIEND, 200, PromiseStatus.CONFIRMED)
+        await s.commit()
+    
+    from src.services.scoring import apply_broken_score
+    
+    async with factory() as s:
+        await apply_broken_score(s, 100, p)
+        stmt = select(User).where(User.telegram_id == 100)
+        res = await s.execute(stmt)
+        user = res.scalar_one()
+        assert user.score == -8  # SCORE_BROKEN_CONFESSION
+        assert user.current_streak == 0
+    
+    await eng.dispose()
+
+
+@pytest.mark.asyncio
+async def test_resolve_dispute_to_done_cancels_penalty_and_adds_score():
+    """Dispute resolved to done should cancel penalty and add full done score."""
+    eng, factory = await _make_test_db()
+    
+    async with factory() as s:
+        await get_or_create_user(s, 100, "alice", "Alice")
+        await get_or_create_user(s, 200, "bob", "Bob")
+        p = await create_promise(s, 100, "Friend promise", TargetType.FRIEND, 200, PromiseStatus.CONFIRMED)
+        await s.commit()
+    
+    from src.services.scoring import apply_disputed_score, resolve_dispute_to_done
+    
+    # First apply dispute penalty
+    async with factory() as s:
+        await apply_disputed_score(s, 100)
+        stmt = select(User).where(User.telegram_id == 100)
+        res = await s.execute(stmt)
+        user = res.scalar_one()
+        assert user.score == -5  # SCORE_DISPUTED_PENALTY
+    
+    # Then resolve to done
+    async with factory() as s:
+        await resolve_dispute_to_done(s, 100, p)
+        stmt = select(User).where(User.telegram_id == 100)
+        res = await s.execute(stmt)
+        user = res.scalar_one()
+        # -5 (penalty cancelled) + 10 (base) + 10 (streak bonus, capped at 10) = 15
+        assert user.score == 15
+        assert user.current_streak == 1
+    
+    await eng.dispose()
+
 
 @pytest.mark.asyncio
 async def test_user_creation():

@@ -7,7 +7,8 @@ from datetime import datetime, timezone
 from typing import Optional, List
 from sqlalchemy import BigInteger, String, Text, DateTime, ForeignKey, Enum, Boolean, Integer, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-import jdatetime
+
+from src.utils.format import format_jalali_date
 
 
 class Base(DeclarativeBase):
@@ -122,8 +123,7 @@ class Promise(Base):
 
     @property
     def jalali_created_at(self) -> str:
-        j_dt = jdatetime.datetime.fromtimestamp(self.created_at.timestamp())
-        return j_dt.strftime("%Y/%m/%d ساعت %H:%M")
+        return format_jalali_date(self.created_at)
 
     @property
     def status_emoji(self) -> str:

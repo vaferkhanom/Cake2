@@ -37,6 +37,14 @@ class ReceiverConfirmDoneCallback(CallbackData, prefix="rcd"):
     action: str  # "confirm_done" | "dispute"
 
 
+class BrokenCallback(CallbackData, prefix="brk"):
+    promise_id: int
+
+
+class ResolveDisputeCallback(CallbackData, prefix="rdp"):
+    promise_id: int
+
+
 class DeadlineCallback(CallbackData, prefix="dl"):
     action: str  # "tomorrow" | "week" | "month" | "none" | "custom"
 
@@ -68,6 +76,7 @@ def short_title(content: str, max_len: int = 24) -> str:
 def format_promise_card(promise, user_id: int) -> str:
     """Format full promise detail card."""
     from src.database.models import PromiseStatus
+    from src.utils.format import format_jalali_date, format_jalali_short
     
     status_emoji = {
         PromiseStatus.PENDING: "⏳",
@@ -107,13 +116,10 @@ def format_promise_card(promise, user_id: int) -> str:
         else:
             lines.append(f"👤 از: {promise.giver.display_name if promise.giver else 'دوست'}")
     
-    import jdatetime
-    jd = jdatetime.datetime.fromtimestamp(promise.created_at.timestamp())
-    lines.append(f"🗓 {jd.strftime('%Y/%m/%d ساعت %H:%M')}")
+    lines.append(f"🗓 {format_jalali_date(promise.created_at)}")
     
     if promise.deadline:
-        jdl = jdatetime.datetime.fromgregorian(datetime=promise.deadline, timezone=promise.deadline.tzinfo)
-        lines.append(f"⏰ مهلت: {jdl.strftime('%Y/%m/%d')}")
+        lines.append(f"⏰ مهلت: {format_jalali_short(promise.deadline)}")
     
     return "\n".join(lines)
 
@@ -279,20 +285,34 @@ def get_promise_list_header(list_type: str, page: int, total_count: int) -> str:
     )
 
 
-def get_promise_detail_keyboard(promise_id: int, giver_id: int, list_type: str, page: int):
-    """Keyboard for promise detail view with action buttons + back to list."""
+def get_promise_detail_keyboard(promise, user_id: int, list_type: str, page: int):
+    """Keyboard for promise detail view with action buttons based on status and user role + back to list."""
+    from src.database.models import PromiseStatus
+    
     builder = InlineKeyboardBuilder()
-    
-    # Action buttons based on status (will be filtered in handler)
-    builder.button(text="🏆 انجامش دادم", callback_data=PromiseStatusCallback(promise_id=promise_id, action="done", giver_id=giver_id).pack())
-    builder.button(text="💔 نشد که نشد", callback_data=PromiseStatusCallback(promise_id=promise_id, action="broken", giver_id=giver_id).pack())
-    
+    is_giver = promise.giver_id == user_id
+
+    # Action buttons based on status and user role
+    if promise.status == PromiseStatus.CONFIRMED and is_giver:
+        # Only giver can claim done or admit broken on CONFIRMED promises
+        builder.button(text="🏁 انجامش دادم", callback_data=ClaimDoneCallback(promise_id=promise.id, action="claim_done").pack())
+        builder.button(text="💔 نشد که نشد", callback_data=BrokenCallback(promise_id=promise.id).pack())
+    elif promise.status == PromiseStatus.CLAIMED_DONE and not is_giver:
+        # Only receiver can confirm or dispute on CLAIMED_DONE
+        builder.button(text="✅ بله انجام داده", callback_data=ReceiverConfirmDoneCallback(promise_id=promise.id, action="confirm_done").pack())
+        builder.button(text="❌ نه انجام نداده", callback_data=ReceiverConfirmDoneCallback(promise_id=promise.id, action="dispute").pack())
+    elif promise.status == PromiseStatus.DISPUTED and not is_giver:
+        # Receiver can resolve dispute
+        builder.button(text="🔄 در واقع تایید می‌کنم", callback_data=ResolveDisputeCallback(promise_id=promise.id).pack())
+    # For other statuses (DONE, BROKEN, EXPIRED, PENDING, REJECTED, or CLAIMED_DONE for giver)
+    # no action buttons shown
+
     # Back to list button
     builder.button(
         text="🔙 بازگشت به لیست",
         callback_data=PromiseListCallback(list_type=list_type, page=page).pack()
     )
-    
+
     builder.adjust(2, 1)
     return builder.as_markup()
 
