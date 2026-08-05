@@ -905,7 +905,9 @@ async def test_receiver_accept_edits_giver_message():
     assert edit_kwargs["chat_id"] == 100
     assert edit_kwargs["message_id"] == 11111
     assert "تایید کرد" in edit_kwargs["text"]
-    assert edit_kwargs["reply_markup"] is not None  # claim_done_keyboard present
+    # Should NOT include claim_done_keyboard in confirmation notification
+    # claim_done_keyboard is only shown in promise detail view
+    assert "reply_markup" not in edit_kwargs or edit_kwargs["reply_markup"] is None
 
     # Should NOT send a new message (edit succeeded)
     cb.bot.send_message.assert_not_called()
@@ -940,7 +942,8 @@ async def test_receiver_accept_fallback_when_edit_fails():
     send_kwargs = cb.bot.send_message.call_args[1]
     assert send_kwargs["chat_id"] == 100
     assert "تایید کرد" in send_kwargs["text"]
-    assert send_kwargs["reply_markup"] is not None  # claim_done_keyboard in fallback too
+    # Should NOT include claim_done_keyboard in confirmation notification
+    assert "reply_markup" not in send_kwargs or send_kwargs["reply_markup"] is None
     await eng.dispose()
 
 
@@ -998,3 +1001,79 @@ async def test_receiver_reject_fallback_when_no_pending_fields():
     assert send_kwargs["chat_id"] == 100
     assert "رد کرد" in send_kwargs["text"]
     await eng.dispose()
+
+
+def test_claim_done_keyboard_only_in_detail_view():
+    """
+    Static test: Ensure claim_done_keyboard is ONLY used in promise detail view
+    (get_promise_detail_keyboard) and NOT in any notification/acceptance handlers.
+    
+    This prevents the recurring bug where "claim done" buttons appear immediately
+    after promise acceptance instead of only in the detail view.
+    """
+    import ast
+    import os
+    
+    handlers_path = os.path.join(os.path.dirname(__file__), "..", "src", "handlers", "promise.py")
+    with open(handlers_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    
+    # Parse the AST to find all calls to claim_done_keyboard
+    tree = ast.parse(content)
+    
+    claim_done_calls = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            # Check if it's a call to claim_done_keyboard
+            if isinstance(node.func, ast.Name) and node.func.id == "claim_done_keyboard":
+                claim_done_calls.append(node.lineno)
+            elif isinstance(node.func, ast.Attribute) and node.func.attr == "claim_done_keyboard":
+                claim_done_calls.append(node.lineno)
+    
+    # The ONLY valid usage is in inline.py's get_promise_detail_keyboard
+    # In promise.py, claim_done_keyboard should ONLY be imported, never called
+    assert len(claim_done_calls) == 0, (
+        f"claim_done_keyboard() called in promise.py at lines {claim_done_calls}. "
+        "It should ONLY be used in inline.py's get_promise_detail_keyboard() "
+        "for the promise detail view, NOT in any acceptance/notification handlers."
+    )
+
+
+def test_no_claim_text_in_giver_notifications():
+    """
+    Static test: Ensure GIVER acceptance notifications don't contain "claim" or "ادعای انجام" text.
+    The receiver's own confirmation message CAN mention it, but the giver's notification should be simple.
+    """
+    import os
+    
+    handlers_path = os.path.join(os.path.dirname(__file__), "..", "src", "handlers", "promise.py")
+    with open(handlers_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    
+    # These patterns should NOT appear in the GIVER notification
+    forbidden_patterns = [
+        "ادعای انجام بده",
+        "می‌تونی ادعای انجام",
+    ]
+    
+    # Check ONLY the _notify_promise_confirmed function (giver notification)
+    import re
+    func_match = re.search(r'async def _notify_promise_confirmed\(.*?\n(?:.*?\n)*?\n(?:async def|# ──|$)', content, re.MULTILINE)
+    if func_match:
+        func_content = func_match.group(0)
+        # Extract only the function body (after docstring)
+        body_start = func_content.find('"""') 
+        if body_start != -1:
+            body_end = func_content.find('"""', body_start + 3)
+            if body_end != -1:
+                func_body = func_content[body_end + 3:]
+            else:
+                func_body = func_content
+        else:
+            func_body = func_content
+            
+        for pattern in forbidden_patterns:
+            assert pattern not in func_body, (
+                f"Forbidden pattern '{pattern}' found in _notify_promise_confirmed body. "
+                "Giver notifications should be simple confirmations only."
+            )

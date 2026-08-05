@@ -32,7 +32,7 @@ async def get_session():
 
 
 async def get_or_create_user(session: AsyncSession, telegram_id: int, username: str | None, full_name: str) -> User:
-    """Get or create user, upgrading stub users to real ones."""
+    """Get or create user, upgrading stub users to real ones. Session commit handled by caller."""
     cleaned_username = username.lstrip("@") if username else None
 
     user = None
@@ -51,7 +51,7 @@ async def get_or_create_user(session: AsyncSession, telegram_id: int, username: 
                 update(Promise).where(Promise.receiver_id == old_id).values(receiver_id=telegram_id)
             )
             await session.delete(stub_user)
-            await session.commit()
+            await session.flush()
 
             user = User(
                 telegram_id=telegram_id,
@@ -60,7 +60,8 @@ async def get_or_create_user(session: AsyncSession, telegram_id: int, username: 
                 has_started_bot=True,
             )
             session.add(user)
-            await session.commit()
+            await session.flush()
+            await session.refresh(user)
             return user
 
     if not user:
@@ -79,7 +80,8 @@ async def get_or_create_user(session: AsyncSession, telegram_id: int, username: 
             user.username = cleaned_username
         user.full_name = full_name
 
-    await session.commit()
+    await session.flush()
+    await session.refresh(user)
     return user
 
 
@@ -98,7 +100,7 @@ async def get_user_by_username(session: AsyncSession, username: str) -> User | N
 
 
 async def create_stub_user(session: AsyncSession, username: str) -> User:
-    """Create a stub user for someone who hasn't started the bot."""
+    """Create a stub user for someone who hasn't started the bot. Session commit handled by caller."""
     import random
     stub = User(
         telegram_id=-random.randint(1000000, 9999999),
@@ -107,7 +109,7 @@ async def create_stub_user(session: AsyncSession, username: str) -> User:
         has_started_bot=False,
     )
     session.add(stub)
-    await session.commit()
+    await session.flush()
     await session.refresh(stub)
     return stub
 
@@ -121,7 +123,7 @@ async def create_promise(
     status: PromiseStatus,
     deadline: str | None = None,
 ) -> Promise:
-    """Create a new promise and assign promise_id."""
+    """Create a new promise and assign promise_id. Session commit handled by caller."""
     from sqlalchemy import func
 
     # Get next promise_id
@@ -140,18 +142,18 @@ async def create_promise(
         deadline=deadline,
     )
     session.add(promise)
-    await session.commit()
+    await session.flush()  # Get the ID without committing
     await session.refresh(promise)
     return promise
 
 
 async def update_promise_status(session: AsyncSession, promise_id: int, status: PromiseStatus) -> Promise | None:
-    """Update promise status."""
+    """Update promise status. Session commit handled by caller."""
     stmt = select(Promise).where(Promise.id == promise_id)
     res = await session.execute(stmt)
     promise = res.scalar_one_or_none()
     if promise:
         promise.status = status
-        await session.commit()
+        await session.flush()
         await session.refresh(promise)
     return promise

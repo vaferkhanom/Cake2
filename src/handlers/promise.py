@@ -7,7 +7,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from aiogram.filters import Command, CommandObject, CommandStart
@@ -54,7 +54,7 @@ from src.services.scoring import (
     apply_disputed_score,
     resolve_dispute_to_done,
 )
-from src.states.promise import PromiseStates
+from src.states.promise import PromiseStates, GroupPromiseStates
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -227,23 +227,41 @@ async def cmd_profile(message: Message) -> None:
 
 @router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
-    """Handle /help — show help text."""
-    text = (
-        "📖 <b>راهنمای قول‌یار</b>\n\n"
-        "قول‌یار کمکت می‌کنه قول‌هات رو پیگیری کنی.\n\n"
-        "<b>دستورات:</b>\n"
-        "/start — شروع و منوی اصلی\n"
-        "/new — ثبت قول جدید\n"
-        "/promises — لیست قول‌های من\n"
-        "/profile — پروفایل و امتیاز\n"
-        "/help — نمایش این راهنما\n\n"
-        "<b>قول چطور کار می‌کنه؟</b>\n"
-        "1️⃣ یه قول ثبت کن (برای خودت یا دوستت)\n"
-        "2️⃣ اگه برای دوسته، اون باید تایید کنه\n"
-        "3️⃣ بعد از انجام، ادعای انجام بده\n"
-        "4️⃣ طرف مقابل تایید یا رد می‌کنه\n"
-        "5️⃣ امتیاز بگیر! 🏆"
-    )
+    """Handle /help — show help text (different for group vs private)."""
+    is_group = message.chat.type in ("group", "supergroup")
+    
+    if is_group:
+        text = (
+            "📖 <b>راهنمای قول‌یار (گروه)</b>\n\n"
+            "در گروه‌ها می‌تونی با دو روش برای کسی قول ثبت کنی:\n\n"
+            "<b>۱. با تگ کردن یوزرنیم:</b>\n"
+            "/promise @username\n\n"
+            "<b>۲. با ریپلای به پیامش:</b>\n"
+            "روی پیام شخص ریپلای کن و بفرست:\n"
+            "/promise\n\n"
+            "بعد از این، متن قولت رو بنویس و تایید کن.\n"
+            "شخص مورد نظر در چت خصوصی با بات، درخواست رو می‌بینه و تایید یا رد می‌کنه.\n\n"
+            "<b>نکته مهم:</b> فلوی گروهی با فلوی خصوصی متفاوته — اینجا مستقیم پرسیده میشه "
+            "\"متن قولت چیه؟\" چون طرف رو از تگ/ریپلای می‌شناسیم."
+        )
+    else:
+        text = (
+            "📖 <b>راهنمای قول‌یار</b>\n\n"
+            "قول‌یار کمکت می‌کنه قول‌هات رو پیگیری کنی.\n\n"
+            "<b>دستورات:</b>\n"
+            "/start — شروع و منوی اصلی\n"
+            "/new — ثبت قول جدید\n"
+            "/promises — لیست قول‌های من\n"
+            "/profile — پروفایل و امتیاز\n"
+            "/help — نمایش این راهنما\n\n"
+            "<b>قول چطور کار می‌کنه؟</b>\n"
+            "1️⃣ یه قول ثبت کن (برای خودت یا دوستت)\n"
+            "2️⃣ اگه برای دوسته، اون باید تایید کنه\n"
+            "3️⃣ بعد از انجام، ادعای انجام بده\n"
+            "4️⃣ طرف مقابل تایید یا رد می‌کنه\n"
+            "5️⃣ امتیاز بگیر! 🏆"
+        )
+    
     await message.answer(text, reply_markup=back_to_main_keyboard())
 
 
@@ -525,6 +543,44 @@ async def _process_friend(
         )
 
 
+# ── Shared Helpers ────────────────────────────────────────────
+
+async def _notify_promise_confirmed(
+    bot: Bot,
+    giver_id: int,
+    giver_pending_message_id: int | None,
+    giver_pending_chat_id: int | None,
+    acceptor_name: str,
+    promise_id: int,
+) -> None:
+    """
+    Send a simple confirmation notification to the giver when a promise is accepted.
+    Does NOT include claim_done_keyboard — that's only shown in promise detail view.
+    """
+    text = f"🎉 {escape_html(acceptor_name)} قول #{promise_id} رو تایید کرد!"
+    
+    # Try to edit the giver's pending message first
+    if giver_pending_message_id and giver_pending_chat_id:
+        try:
+            await bot.edit_message_text(
+                chat_id=giver_pending_chat_id,
+                message_id=giver_pending_message_id,
+                text=text,
+            )
+            return
+        except Exception as e:
+            logger.warning(
+                "Could not edit giver pending message %s/%s: %s",
+                giver_pending_chat_id, giver_pending_message_id, e
+            )
+    
+    # Fallback: send new message
+    try:
+        await bot.send_message(chat_id=giver_id, text=text)
+    except Exception as e:
+        logger.warning("Could not notify giver %s: %s", giver_id, e)
+
+
 # ── Step 5: Receiver accepts/rejects ─────────────────────
 
 @router.callback_query(ReceiverConfirmCallback.filter(F.action == "accept"))
@@ -556,24 +612,15 @@ async def promise_accepted(callback: CallbackQuery, callback_data: ReceiverConfi
         f"✅ قول #{promise_id} تایید شد. حالا قول‌دهنده می‌تونه ادعای انجام بده.",
     )
 
-    # Try to edit giver's pending message; fallback to new message
-    accepted_text = f"🎉 {escape_html(callback.from_user.full_name)} قول #{promise_id} رو تایید کرد! الان می‌تونی ادعای انجام بده."
-    if giver_pending_message_id and giver_pending_chat_id:
-        try:
-            await callback.bot.edit_message_text(
-                chat_id=giver_pending_chat_id,
-                message_id=giver_pending_message_id,
-                text=accepted_text,
-                reply_markup=claim_done_keyboard(promise_id),
-            )
-            return
-        except Exception as e:
-            logger.warning("Could not edit giver pending message %s/%s: %s", giver_pending_chat_id, giver_pending_message_id, e)
-
-    try:
-        await callback.bot.send_message(chat_id=giver_id, text=accepted_text, reply_markup=claim_done_keyboard(promise_id))
-    except Exception as e:
-        logger.warning("Could not notify giver %s: %s", giver_id, e)
+    # Use shared helper for simple confirmation notification (no claim keyboard)
+    await _notify_promise_confirmed(
+        bot=callback.bot,
+        giver_id=giver_id,
+        giver_pending_message_id=giver_pending_message_id,
+        giver_pending_chat_id=giver_pending_chat_id,
+        acceptor_name=callback.from_user.full_name,
+        promise_id=promise_id,
+    )
 
 
 @router.callback_query(ReceiverConfirmCallback.filter(F.action == "reject"))
@@ -1046,6 +1093,9 @@ async def show_profile_callback(callback: CallbackQuery) -> None:
 @router.message(Command("promise"))
 async def group_promise_command(message: Message, command: CommandObject, state: FSMContext) -> None:
     """Handle /promise in groups - mention + reply to user."""
+    # Clear any previous state to ensure clean start
+    await state.clear()
+    
     # Check if it's a group
     if message.chat.type == "private":
         await message.answer("این دستور فقط در گروه‌ها کار می‌کنه.")
@@ -1075,7 +1125,7 @@ async def group_promise_command(message: Message, command: CommandObject, state:
         await message.answer("نمیتونی به خودت قول بدی از این راه! از منوی «ثبت قول جدید» استفاده کن.")
         return
 
-    await state.set_state(PromiseStates.waiting_for_content)
+    await state.set_state(GroupPromiseStates.waiting_for_content)
     await state.update_data(target_user_id=target_user.telegram_id)
 
     await message.answer(
@@ -1084,7 +1134,7 @@ async def group_promise_command(message: Message, command: CommandObject, state:
     )
 
 
-@router.message(PromiseStates.waiting_for_content, F.text)
+@router.message(GroupPromiseStates.waiting_for_content, F.text)
 async def group_promise_content_received(message: Message, state: FSMContext) -> None:
     """Handle content for group promise creation."""
     content = message.text.strip()
@@ -1095,16 +1145,21 @@ async def group_promise_content_received(message: Message, state: FSMContext) ->
     data = await state.get_data()
     target_user_id = data.get("target_user_id")
 
+    # Get target user for display name
+    async with get_session() as session:
+        target_user = await get_user_by_id(session, target_user_id)
+    target_display_name = target_user.display_name if target_user else str(target_user_id)
+
     await state.update_data(content=content)
-    await state.set_state(PromiseStates.waiting_for_confirmation)
+    await state.set_state(GroupPromiseStates.waiting_for_confirmation)
 
     await message.answer(
-        f"قول برای {target_user_id}: <blockquote>{escape_html(content)}</blockquote>\n\nثبت کنم؟",
+        f"قول برای {target_display_name}: <blockquote>{escape_html(content)}</blockquote>\n\nثبت کنم؟",
         reply_markup=confirm_keyboard(),
     )
 
 
-@router.callback_query(ConfirmPromiseCallback.filter(F.action == "yes"), PromiseStates.waiting_for_confirmation)
+@router.callback_query(ConfirmPromiseCallback.filter(F.action == "yes"), GroupPromiseStates.waiting_for_confirmation)
 async def group_promise_confirmed(callback: CallbackQuery, state: FSMContext) -> None:
     """Confirm group promise - skip deadline/target, create PENDING directly."""
     await callback.answer()
@@ -1135,6 +1190,11 @@ async def group_promise_confirmed(callback: CallbackQuery, state: FSMContext) ->
 
     # Try to DM the receiver
     try:
+        # Get target user for display name
+        async with get_session() as session:
+            target_user = await get_user_by_id(session, target_user_id)
+        target_display_name = target_user.display_name if target_user else str(target_user_id)
+        
         await callback.bot.send_message(
             chat_id=target_user_id,
             text=(
@@ -1145,7 +1205,7 @@ async def group_promise_confirmed(callback: CallbackQuery, state: FSMContext) ->
             reply_markup=receiver_confirm_keyboard(promise_id),
         )
         await callback.message.edit_text(
-            f"فرستادم براش ✅ قول #{promise_id} در انتظار تایید {target_user_id}ه.",
+            f"فرستادم براش ✅ قول #{promise_id} در انتظار تایید {target_display_name}.",
             reply_markup=back_to_main_keyboard(),
         )
         # Save message_id for edit-message flow in accept/reject

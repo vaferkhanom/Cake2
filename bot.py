@@ -5,7 +5,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import BotCommand
+from aiogram.types import BotCommand, BotCommandScopeAllGroupChats
 from src.config import settings
 from src.database.session import init_db
 from src.handlers import promise
@@ -25,6 +25,11 @@ COMMANDS = [
     BotCommand(command="help", description="راهنما"),
 ]
 
+GROUP_COMMANDS = [
+    BotCommand(command="promise", description="ثبت قول برای یه عضو گروه (با تگ @username یا ریپلای)"),
+    BotCommand(command="help", description="راهنمای استفاده در گروه"),
+]
+
 
 async def main():
     logger.info("Initializing database...")
@@ -37,6 +42,7 @@ async def main():
     dp.include_router(promise.router)
 
     await bot.set_my_commands(COMMANDS)
+    await bot.set_my_commands(GROUP_COMMANDS, scope=BotCommandScopeAllGroupChats())
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
