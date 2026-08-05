@@ -135,31 +135,13 @@ class Promise(Base):
 
     @property
     def status_emoji(self) -> str:
-        mapping = {
-            PromiseStatus.PENDING: "⏳",
-            PromiseStatus.CONFIRMED: "✅",
-            PromiseStatus.REJECTED: "❌",
-            PromiseStatus.CLAIMED_DONE: "⏳",
-            PromiseStatus.DONE: "🏆",
-            PromiseStatus.DISPUTED: "⚠️",
-            PromiseStatus.BROKEN: "💔",
-            PromiseStatus.EXPIRED: "⏰",
-        }
-        return mapping.get(self.status, "")
+        from src.keyboards.inline import get_status_emoji
+        return get_status_emoji(self.status)
 
     @property
     def status_text(self) -> str:
-        mapping = {
-            PromiseStatus.PENDING: "در انتظار تایید",
-            PromiseStatus.CONFIRMED: "تایید شده",
-            PromiseStatus.REJECTED: "رد شده",
-            PromiseStatus.CLAIMED_DONE: "در انتظار تایید طرف مقابل",
-            PromiseStatus.DONE: "انجام شده",
-            PromiseStatus.DISPUTED: "مخالفیت شده",
-            PromiseStatus.BROKEN: "نقض شده",
-            PromiseStatus.EXPIRED: "منقضی شده",
-        }
-        return mapping.get(self.status, "")
+        from src.keyboards.inline import get_status_text
+        return get_status_text(self.status)
 
     @property
     def status_display(self) -> str:

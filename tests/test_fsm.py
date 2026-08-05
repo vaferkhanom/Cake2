@@ -36,8 +36,11 @@ from src.handlers.promise import (
     dispute_done,
     mark_broken,
     resolve_dispute,
-    main_create_promise,
-    main_show_my_promises_menu,
+    reply_create_promise,
+    reply_my_promises,
+    reply_profile,
+    reply_help,
+    get_main_reply_keyboard,
 )
 from src.keyboards.inline import (
     ConfirmPromiseCallback,
@@ -94,7 +97,8 @@ def _make_fsm(storage=None):
 async def test_start_enters_fsm():
     state = _make_fsm()
     cb = make_callback("main:create", user_id=100)
-    await main_create_promise(cb, state)
+    msg = make_message(text="🤝 ثبت قول جدید", user_id=100)
+    await reply_create_promise(msg, state)
     assert await state.get_state() == PromiseStates.waiting_for_content
 
 
@@ -258,10 +262,11 @@ async def test_receiver_reject():
     with patch("src.handlers.promise.get_session", _session_cm(factory)):
         await promise_rejected(cb, cb_data)
 
+    # Promise should be completely deleted from DB
     async with factory() as s:
         from sqlalchemy import select
-        p = (await s.execute(select(Promise).where(Promise.id == pid))).scalar_one()
-        assert p.status == PromiseStatus.REJECTED
+        p = (await s.execute(select(Promise).where(Promise.id == pid))).scalar_one_or_none()
+        assert p is None, "Rejected promise should be deleted from DB"
     await eng.dispose()
 
 
@@ -334,11 +339,11 @@ async def test_friend_numeric_id_not_in_db():
 
 @ pytest.mark.asyncio
 async def test_show_my_promises_menu():
-    """Test that main menu shows 3 options."""
-    cb = make_callback("main:list", user_id=100)
-    await main_show_my_promises_menu(cb)
-    cb.message.edit_text.assert_called_once()
-    call_kwargs = cb.message.edit_text.call_args[1]
+    """Test that reply keyboard 'قول‌های من' sends inline sub-menu."""
+    msg = make_message(text="📋 قول‌های من", user_id=100)
+    await reply_my_promises(msg)
+    msg.answer.assert_called_once()
+    call_kwargs = msg.answer.call_args[1]
     assert "reply_markup" in call_kwargs
 
 
@@ -1197,21 +1202,20 @@ async def test_reject_notification_includes_content():
 
 @pytest.mark.asyncio
 async def test_main_menu_has_help_button():
-    """Main menu should have 4 buttons including help."""
-    from src.handlers.promise import get_main_inline_keyboard
-    keyboard = await get_main_inline_keyboard()
-    
-    # Check that keyboard has 4 buttons
-    assert len(keyboard.inline_keyboard) == 3  # 3 rows: 1, 2, 1
-    
-    # Check help button exists
-    found_help = False
-    for row in keyboard.inline_keyboard:
+    """Reply keyboard should have 4 buttons including help."""
+    keyboard = get_main_reply_keyboard()
+
+    # Check that keyboard has buttons with expected texts
+    all_texts = []
+    for row in keyboard.keyboard:
         for button in row:
-            if button.callback_data == "main:help":
-                found_help = True
-                break
-    assert found_help, "Help button with callback_data 'main:help' not found in main menu"
+            all_texts.append(button.text)
+
+    assert "📖 راهنما" in all_texts
+    assert "🤝 ثبت قول جدید" in all_texts
+    assert "📋 قول‌های من" in all_texts
+    assert "👤 پروفایل من" in all_texts
+    assert len(all_texts) == 4
 
 
 @pytest.mark.asyncio

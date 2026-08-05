@@ -9,8 +9,9 @@ from typing import Optional, List
 
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.filters import Command, CommandObject, CommandStart
+from aiogram.utils.keyboard import ReplyKeyboardBuilder
 from sqlalchemy import select, update, func
 from sqlalchemy.orm import selectinload
 
@@ -22,7 +23,6 @@ from src.database.session import (
     get_user_by_id,
     get_user_by_username,
     get_or_create_user,
-    update_promise_status,
 )
 from src.utils.format import escape_html, format_jalali_date, format_jalali_short, make_mention
 from src.keyboards.inline import (
@@ -86,6 +86,41 @@ async def send_pending_notifications(bot, session, user: User) -> None:
             logger.warning("Could not send pending notification to %s: %s", user.telegram_id, e)
 
 
+# ── Reply Keyboard (persistent bottom menu) ───────────────
+
+REPLY_MAIN_TEXTS = (
+    "🤝 ثبت قول جدید",
+    "📋 قول‌های من",
+    "👤 پروفایل من",
+    "📖 راهنما",
+)
+
+
+def get_main_reply_keyboard() -> ReplyKeyboardMarkup:
+    """Persistent reply keyboard shown at bottom of chat."""
+    builder = ReplyKeyboardBuilder()
+    builder.button(text="🤝 ثبت قول جدید")
+    builder.button(text="📋 قول‌های من")
+    builder.row(KeyboardButton(text="👤 پروفایل من"), KeyboardButton(text="📖 راهنما"))
+    return builder.as_markup(resize_keyboard=True)
+
+
+def back_to_main_keyboard():
+    """Inline 'back' button used inside FSM flows (edit_text target)."""
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔙 بازگشت به منوی اصلی", callback_data="main:back")
+    return builder.as_markup()
+
+
+async def _send_welcome(message: Message) -> None:
+    """Send the welcome text with the reply keyboard."""
+    await message.answer(
+        "سلام! من قول‌یارم 🤝 حواسم به قول‌هایی هست که به خودت یا دوستات می‌دی، تا هیچ‌کدوم فراموش نشن.\n\nچیکار کنیم؟",
+        reply_markup=get_main_reply_keyboard(),
+    )
+
+
 # ── /start ────────────────────────────────────────────────
 
 @router.message(CommandStart())
@@ -132,67 +167,56 @@ async def cmd_start(message: Message, command: CommandObject, state: FSMContext)
 
         await send_pending_notifications(message.bot, session, user)
 
-    await message.answer(
-        "سلام! من قول‌یارم 🤝 حواسم به قول‌هایی هست که به خودت یا دوستات می‌دی، تا هیچ‌کدوم فراموش نشن.\n\nچیکار کنیم؟",
-        reply_markup=await get_main_inline_keyboard(),
-    )
+    await _send_welcome(message)
 
 
-async def get_main_inline_keyboard():
-    """Get the main inline keyboard (replaces Reply Keyboard)."""
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
-    builder = InlineKeyboardBuilder()
-    builder.button(text="🤝 ثبت قول جدید", callback_data="main:create")
-    builder.button(text="📋 قول‌های من", callback_data="main:list")
-    builder.button(text="👤 پروفایل من", callback_data="main:profile")
-    builder.button(text="📖 راهنما", callback_data="main:help")
-    builder.adjust(1, 2, 1)
-    return builder.as_markup()
+# ── Reply Keyboard Text Handlers ─────────────────────────
 
-
-@router.callback_query(F.data == "main:create")
-async def main_create_promise(callback: CallbackQuery, state: FSMContext) -> None:
-    """Start promise creation from main menu."""
-    await callback.answer()
+@router.message(F.text == "🤝 ثبت قول جدید")
+async def reply_create_promise(message: Message, state: FSMContext) -> None:
+    """Handle 'ثبت قول جدید' from reply keyboard."""
+    await state.clear()
     await state.set_state(PromiseStates.waiting_for_content)
-    await callback.message.edit_text(
+    await message.answer(
         "بگو ببینم، چه قولی می‌خوای بدی؟ ✍️",
         reply_markup=back_to_main_keyboard(),
     )
 
 
-@router.callback_query(F.data == "main:list")
-async def main_show_my_promises_menu(callback: CallbackQuery) -> None:
-    """Show my promises menu from main menu."""
-    await callback.answer()
-    await callback.message.edit_text(
+@router.message(F.text == "📋 قول‌های من")
+async def reply_my_promises(message: Message) -> None:
+    """Handle 'قول‌های من' from reply keyboard."""
+    await message.answer(
         "قول‌های من 👇",
         reply_markup=get_my_promises_menu_keyboard(),
     )
 
 
-@router.callback_query(F.data == "main:profile")
-async def main_show_profile(callback: CallbackQuery) -> None:
-    """Show profile from main menu."""
-    await callback.answer()
-    await show_profile_callback(callback)
+@router.message(F.text == "👤 پروفایل من")
+async def reply_profile(message: Message) -> None:
+    """Handle 'پروفایل من' from reply keyboard."""
+    user_id = message.from_user.id if message.from_user else 0
+    text = await _build_profile_text(user_id)
+    await message.answer(text, reply_markup=back_to_main_keyboard())
 
 
-def back_to_main_keyboard():
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
-    builder = InlineKeyboardBuilder()
-    builder.button(text="🔙 بازگشت به منوی اصلی", callback_data="main:back")
-    return builder.as_markup()
+@router.message(F.text == "📖 راهنما")
+async def reply_help(message: Message) -> None:
+    """Handle 'راهنما' from reply keyboard."""
+    is_group = message.chat.type in ("group", "supergroup")
+    text = await _build_help_text(is_group)
+    await message.answer(text, reply_markup=back_to_main_keyboard())
 
+
+# ── main:back callback (inline keyboards inside flows) ────
 
 @router.callback_query(F.data == "main:back")
 async def main_back(callback: CallbackQuery, state: FSMContext) -> None:
-    """Back to main menu."""
+    """Back to main menu — edits current message to welcome text."""
     await callback.answer()
     await state.clear()
     await callback.message.edit_text(
         "سلام! من قول‌یارم 🤝 حواسم به قول‌هایی هست که به خودت یا دوستات می‌دی، تا هیچ‌کدوم فراموش نشن.\n\nچیکار کنیم؟",
-        reply_markup=await get_main_inline_keyboard(),
     )
 
 
@@ -270,14 +294,6 @@ async def cmd_help(message: Message) -> None:
     is_group = message.chat.type in ("group", "supergroup")
     text = await _build_help_text(is_group)
     await message.answer(text, reply_markup=back_to_main_keyboard())
-
-
-@router.callback_query(F.data == "main:help")
-async def main_help_callback(callback: CallbackQuery) -> None:
-    """Handle help button from main menu."""
-    await callback.answer()
-    text = await _build_help_text(is_group=False)
-    await callback.message.edit_text(text, reply_markup=back_to_main_keyboard())
 
 
 # ── Step 1: Receive promise content ──────────────────────
@@ -433,8 +449,8 @@ async def target_friend(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(PromiseStates.waiting_for_friend_id)
     await callback.message.edit_text(
         "آیدیش رو بفرست 🔗\n"
-        "اگه یوزرنیم نداره، پیامی ازش برام فوروارد کن "
-        "یا آیدی عددیش رو بده.",
+        "بهترین راه دادن یوزرنیم یا آیدی عددیه؛ فوروارد هم کار می‌کنه ولی "
+        "اگه طرف تنظیمات حریم خصوصیش محدود باشه، ممکنه نتونم بفهمم کیه.",
         reply_markup=back_to_main_keyboard(),
     )
 
@@ -659,7 +675,7 @@ async def promise_accepted(callback: CallbackQuery, callback_data: ReceiverConfi
 
 @router.callback_query(ReceiverConfirmCallback.filter(F.action == "reject"))
 async def promise_rejected(callback: CallbackQuery, callback_data: ReceiverConfirmCallback) -> None:
-    """Receiver rejected the promise."""
+    """Receiver rejected the promise — record is deleted from DB."""
     await callback.answer()
 
     if not callback.from_user:
@@ -677,17 +693,20 @@ async def promise_rejected(callback: CallbackQuery, callback_data: ReceiverConfi
             await callback.answer("این دکمه برای شما نیست", show_alert=True)
             return
 
-        promise.status = PromiseStatus.REJECTED
+        # Save data before deletion
         giver_id = promise.giver_id
         giver_pending_message_id = promise.giver_pending_message_id
         giver_pending_chat_id = promise.giver_pending_chat_id
         promise_content = promise.content
 
+        # Delete promise record completely
+        await session.delete(promise)
+
     await callback.message.edit_text(
         f"❌ قول #{promise_id} رد شد.",
     )
 
-    # Try to edit giver's pending message; fallback to new message
+    # Notify giver (using saved data, promise is already deleted)
     rejected_text = f"❌ {escape_html(callback.from_user.full_name)} قول #{promise_id} رو رد کرد:\n<blockquote>{escape_html(promise_content)}</blockquote>"
     if giver_pending_message_id and giver_pending_chat_id:
         try:
@@ -1116,12 +1135,6 @@ async def _build_profile_text(user_id: int) -> str:
         f"📥 قول‌های دریافت شده: {total_received}\n"
         f"   ✅ تایید/انجام شده: {accepted_count}"
     )
-
-
-async def show_profile_callback(callback: CallbackQuery) -> None:
-    """Show user profile with credibility score (callback version)."""
-    text = await _build_profile_text(callback.from_user.id)
-    await callback.message.edit_text(text, reply_markup=back_to_main_keyboard())
 
 
 # ── Group /promise command ───────────────────────────────

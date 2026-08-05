@@ -6,7 +6,6 @@ from aiogram.filters.callback_data import CallbackData
 from src.config import settings
 from src.utils.format import escape_html
 
-
 # ── Callback Data Classes ──────────────────────────────────
 
 class ConfirmPromiseCallback(CallbackData, prefix="cpr"):
@@ -67,6 +66,36 @@ class PromiseItemCallback(CallbackData, prefix="pitem"):
 PAGE_SIZE = 4  # 2x2 grid
 
 
+def get_status_emoji(status) -> str:
+    """Single source of truth for promise status emoji (grid + detail card + model)."""
+    from src.database.models import PromiseStatus
+    mapping = {
+        PromiseStatus.PENDING: "⏳",
+        PromiseStatus.CONFIRMED: "✅",
+        PromiseStatus.CLAIMED_DONE: "⏳",
+        PromiseStatus.DONE: "🎉",
+        PromiseStatus.BROKEN: "💔",
+        PromiseStatus.DISPUTED: "⚠️",
+        PromiseStatus.EXPIRED: "⏰",
+    }
+    return mapping.get(status, "")
+
+
+def get_status_text(status) -> str:
+    """Single source of truth for promise status display text."""
+    from src.database.models import PromiseStatus
+    mapping = {
+        PromiseStatus.PENDING: "در انتظار تایید",
+        PromiseStatus.CONFIRMED: "تایید شده",
+        PromiseStatus.CLAIMED_DONE: "در انتظار تایید طرف مقابل",
+        PromiseStatus.DONE: "انجام شده",
+        PromiseStatus.BROKEN: "نقض شده",
+        PromiseStatus.DISPUTED: "مخالفیت شده",
+        PromiseStatus.EXPIRED: "منقضی شده",
+    }
+    return mapping.get(status, "")
+
+
 def short_title(content: str, max_len: int = 24) -> str:
     """Truncate promise content for button label."""
     if len(content) <= max_len:
@@ -76,39 +105,16 @@ def short_title(content: str, max_len: int = 24) -> str:
 
 def format_promise_card(promise, user_id: int) -> str:
     """Format full promise detail card."""
-    from src.database.models import PromiseStatus
     from src.utils.format import format_jalali_date, format_jalali_short
-    
-    status_emoji = {
-        PromiseStatus.PENDING: "⏳",
-        PromiseStatus.CONFIRMED: "✅",
-        PromiseStatus.REJECTED: "❌",
-        PromiseStatus.CLAIMED_DONE: "⏳",
-        PromiseStatus.DONE: "🏆",
-        PromiseStatus.DISPUTED: "⚠️",
-        PromiseStatus.BROKEN: "💔",
-        PromiseStatus.EXPIRED: "⏰",
-    }
-    
-    status_text = {
-        PromiseStatus.PENDING: "در انتظار تایید",
-        PromiseStatus.CONFIRMED: "تایید شده",
-        PromiseStatus.REJECTED: "رد شده",
-        PromiseStatus.CLAIMED_DONE: "در انتظار تایید طرف مقابل",
-        PromiseStatus.DONE: "انجام شده",
-        PromiseStatus.DISPUTED: "مخالفیت شده",
-        PromiseStatus.BROKEN: "نقض شده",
-        PromiseStatus.EXPIRED: "منقضی شده",
-    }
-    
-    emoji = status_emoji.get(promise.status, "")
-    text = status_text.get(promise.status, "")
-    
+
+    emoji = get_status_emoji(promise.status)
+    text = get_status_text(promise.status)
+
     lines = [
         f"<b>#{promise.promise_id or promise.id}</b> · {emoji} {text}",
         f"💬 {escape_html(promise.content)}",
     ]
-    
+
     if promise.target_type.value == "self":
         lines.append("👤 برای: خودم")
     else:
@@ -118,27 +124,18 @@ def format_promise_card(promise, user_id: int) -> str:
         else:
             giver_name = escape_html(promise.giver.display_name) if promise.giver else "دوست"
             lines.append(f"👤 از: {giver_name}")
-    
+
     lines.append(f"🗓 {format_jalali_date(promise.created_at)}")
-    
+
     if promise.deadline:
         lines.append(f"⏰ مهلت: {format_jalali_short(promise.deadline)}")
-    
+
     return "\n".join(lines)
 
 
 def get_status_button_emoji(status) -> str:
-    """Get emoji for promise status on grid buttons."""
-    from src.database.models import PromiseStatus
-    if status in (PromiseStatus.CONFIRMED, PromiseStatus.DONE):
-        return "✅"
-    elif status in (PromiseStatus.CLAIMED_DONE, PromiseStatus.PENDING):
-        return "⏳"
-    elif status in (PromiseStatus.BROKEN, PromiseStatus.REJECTED, PromiseStatus.DISPUTED):
-        return "💔"
-    elif status == PromiseStatus.EXPIRED:
-        return "⏰"
-    return "⏳"
+    """Get emoji for promise status on grid buttons — delegates to shared function."""
+    return get_status_emoji(status)
 
 
 # ── FSM Keyboards ──────────────────────────────────────────
