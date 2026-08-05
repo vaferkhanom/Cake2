@@ -17,3 +17,5 @@ class GroupPromiseStates(StatesGroup):
     # Promise creation flow (group chat via /promise command)
     waiting_for_content = State()
     waiting_for_confirmation = State()
+    waiting_for_deadline_choice = State()
+    waiting_for_deadline_value = State()

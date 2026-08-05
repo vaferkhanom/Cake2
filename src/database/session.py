@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from src.config import settings
 from src.database.models import Base, User, Promise, PromiseStatus, TargetType
 
@@ -121,30 +122,39 @@ async def create_promise(
     target_type: TargetType,
     receiver_id: int | None,
     status: PromiseStatus,
-    deadline: str | None = None,
+    deadline: str | None = None,  # Also accepts datetime objects
 ) -> Promise:
-    """Create a new promise and assign promise_id. Session commit handled by caller."""
+    """Create a new promise with per-giver promise_id and retry on race condition. Session commit handled by caller."""
     from sqlalchemy import func
 
-    # Get next promise_id
-    stmt = select(func.max(Promise.promise_id))
-    res = await session.execute(stmt)
-    max_id = res.scalar()
-    promise_id = (max_id or 0) + 1
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        try:
+            # Get next promise_id for this giver
+            stmt = select(func.max(Promise.promise_id)).where(Promise.giver_id == giver_id)
+            res = await session.execute(stmt)
+            max_id = res.scalar()
+            promise_id = (max_id or 0) + 1
 
-    promise = Promise(
-        promise_id=promise_id,
-        content=content,
-        giver_id=giver_id,
-        receiver_id=receiver_id,
-        target_type=target_type,
-        status=status,
-        deadline=deadline,
-    )
-    session.add(promise)
-    await session.flush()  # Get the ID without committing
-    await session.refresh(promise)
-    return promise
+            promise = Promise(
+                promise_id=promise_id,
+                content=content,
+                giver_id=giver_id,
+                receiver_id=receiver_id,
+                target_type=target_type,
+                status=status,
+                deadline=deadline,
+            )
+            session.add(promise)
+            await session.flush()  # Get the ID without committing
+            await session.refresh(promise)
+            return promise
+        except IntegrityError:
+            # Race condition: another request got same promise_id, retry
+            await session.rollback()
+            if attempt == max_attempts - 1:
+                raise
+            continue
 
 
 async def update_promise_status(session: AsyncSession, promise_id: int, status: PromiseStatus) -> Promise | None:

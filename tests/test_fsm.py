@@ -1077,3 +1077,112 @@ def test_no_claim_text_in_giver_notifications():
                 f"Forbidden pattern '{pattern}' found in _notify_promise_confirmed body. "
                 "Giver notifications should be simple confirmations only."
             )
+
+
+# ═══════════════════════════════════════════════════════════════
+# NEW TESTS: Per-giver numbering, content in messages, group deadline
+# ═══════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_per_giver_promise_id_independent():
+    """Two different givers should have independent promise_id sequences starting from 1."""
+    eng, factory = await _make_test_db()
+
+    async with factory() as s:
+        await get_or_create_user(s, 100, "alice", "Alice")
+        await get_or_create_user(s, 200, "bob", "Bob")
+
+        # Alice creates 3 promises
+        p1 = await create_promise(s, 100, "promise 1", TargetType.SELF, None, PromiseStatus.CONFIRMED)
+        p2 = await create_promise(s, 100, "promise 2", TargetType.SELF, None, PromiseStatus.CONFIRMED)
+        p3 = await create_promise(s, 100, "promise 3", TargetType.SELF, None, PromiseStatus.CONFIRMED)
+
+        # Bob creates 2 promises
+        p4 = await create_promise(s, 200, "promise A", TargetType.SELF, None, PromiseStatus.CONFIRMED)
+        p5 = await create_promise(s, 200, "promise B", TargetType.SELF, None, PromiseStatus.CONFIRMED)
+
+        await s.commit()
+
+    # Alice's promises should be numbered 1, 2, 3
+    assert p1.promise_id == 1
+    assert p2.promise_id == 2
+    assert p3.promise_id == 3
+
+    # Bob's promises should be numbered 1, 2 (independent of Alice)
+    assert p4.promise_id == 1
+    assert p5.promise_id == 2
+
+    # Verify in database
+    async with factory() as s:
+        alice_promises = await s.execute(
+            select(Promise).where(Promise.giver_id == 100).order_by(Promise.promise_id)
+        )
+        alice_list = alice_promises.scalars().all()
+        assert len(alice_list) == 3
+        assert [p.promise_id for p in alice_list] == [1, 2, 3]
+
+        bob_promises = await s.execute(
+            select(Promise).where(Promise.giver_id == 200).order_by(Promise.promise_id)
+        )
+        bob_list = bob_promises.scalars().all()
+        assert len(bob_list) == 2
+        assert [p.promise_id for p in bob_list] == [1, 2]
+
+    await eng.dispose()
+
+
+@pytest.mark.asyncio
+async def test_accept_notification_includes_content():
+    """Accept notification to giver should include promise content."""
+    eng, factory = await _make_test_db()
+
+    async with factory() as s:
+        await get_or_create_user(s, 100, "alice", "Alice")
+        await get_or_create_user(s, 200, "bob", "Bob")
+        p = await create_promise(s, 100, "buy milk", TargetType.FRIEND, 200, PromiseStatus.PENDING)
+        pid = p.id
+        p.giver_pending_message_id = 11111
+        p.giver_pending_chat_id = 100
+        await s.commit()
+
+    cb_data = ReceiverConfirmCallback(promise_id=pid, action="accept")
+    cb = make_callback(cb_data.pack(), user_id=200, full_name="Bob")
+
+    with patch("src.handlers.promise.get_session", _session_cm(factory)):
+        await promise_accepted(cb, cb_data)
+
+    # Check that notification includes promise content
+    cb.bot.edit_message_text.assert_called_once()
+    edit_kwargs = cb.bot.edit_message_text.call_args[1]
+    assert "buy milk" in edit_kwargs["text"]
+    assert "تایید کرد" in edit_kwargs["text"]
+    await eng.dispose()
+
+
+@pytest.mark.asyncio
+async def test_reject_notification_includes_content():
+    """Reject notification to giver should include promise content."""
+    eng, factory = await _make_test_db()
+
+    async with factory() as s:
+        await get_or_create_user(s, 100, "alice", "Alice")
+        await get_or_create_user(s, 200, "bob", "Bob")
+        p = await create_promise(s, 100, "clean house", TargetType.FRIEND, 200, PromiseStatus.PENDING)
+        pid = p.id
+        p.giver_pending_message_id = 22222
+        p.giver_pending_chat_id = 100
+        await s.commit()
+
+    cb_data = ReceiverConfirmCallback(promise_id=pid, action="reject")
+    cb = make_callback(cb_data.pack(), user_id=200, full_name="Bob")
+
+    with patch("src.handlers.promise.get_session", _session_cm(factory)):
+        await promise_rejected(cb, cb_data)
+
+    # Check that notification includes promise content
+    cb.bot.edit_message_text.assert_called_once()
+    edit_kwargs = cb.bot.edit_message_text.call_args[1]
+    assert "clean house" in edit_kwargs["text"]
+    assert "رد کرد" in edit_kwargs["text"]
+    await eng.dispose()

@@ -5,7 +5,8 @@ from __future__ import annotations
 import enum
 from datetime import datetime, timezone
 from typing import Optional, List
-from sqlalchemy import BigInteger, String, Text, DateTime, ForeignKey, Enum, Boolean, Integer, func
+from sqlalchemy import BigInteger, String, Text, DateTime, ForeignKey, Enum, Boolean, Integer, UniqueConstraint, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from src.utils.format import format_jalali_date
@@ -74,9 +75,12 @@ class User(Base):
 
 class Promise(Base):
     __tablename__ = "promises"
+    __table_args__ = (
+        UniqueConstraint("giver_id", "promise_id", name="uq_giver_promise_id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    promise_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, unique=True)  # Human-friendly ID
+    promise_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # Per-giver human-friendly ID
     content: Mapped[str] = mapped_column(Text, nullable=False)
     giver_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("users.telegram_id"), nullable=False

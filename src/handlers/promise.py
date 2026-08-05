@@ -239,10 +239,10 @@ async def cmd_help(message: Message) -> None:
             "<b>۲. با ریپلای به پیامش:</b>\n"
             "روی پیام شخص ریپلای کن و بفرست:\n"
             "/promise\n\n"
-            "بعد از این، متن قولت رو بنویس و تایید کن.\n"
+            "بعد از این، متن قولت رو بنویس، مهلت زمانی انتخاب کن، و تایید کن.\n"
             "شخص مورد نظر در چت خصوصی با بات، درخواست رو می‌بینه و تایید یا رد می‌کنه.\n\n"
-            "<b>نکته مهم:</b> فلوی گروهی با فلوی خصوصی متفاوته — اینجا مستقیم پرسیده میشه "
-            "\"متن قولت چیه؟\" چون طرف رو از تگ/ریپلای می‌شناسیم."
+            "<b>نکته:</b> مقصد قول (شخص مورد نظر) از تگ/ریپلای گرفته میشه، "
+            "بقیه مراحل (محتوا، مهلت، تایید) مشابه فلوی خصوصیه."
         )
     else:
         text = (
@@ -552,12 +552,13 @@ async def _notify_promise_confirmed(
     giver_pending_chat_id: int | None,
     acceptor_name: str,
     promise_id: int,
+    promise_content: str,
 ) -> None:
     """
-    Send a simple confirmation notification to the giver when a promise is accepted.
-    Does NOT include claim_done_keyboard — that's only shown in promise detail view.
+    Send a confirmation notification to the giver when a promise is accepted.
+    Includes promise content for context. Does NOT include claim_done_keyboard.
     """
-    text = f"🎉 {escape_html(acceptor_name)} قول #{promise_id} رو تایید کرد!"
+    text = f"🎉 {escape_html(acceptor_name)} قول #{promise_id} رو تایید کرد:\n<blockquote>{escape_html(promise_content)}</blockquote>"
     
     # Try to edit the giver's pending message first
     if giver_pending_message_id and giver_pending_chat_id:
@@ -607,6 +608,7 @@ async def promise_accepted(callback: CallbackQuery, callback_data: ReceiverConfi
         giver_id = promise.giver_id
         giver_pending_message_id = promise.giver_pending_message_id
         giver_pending_chat_id = promise.giver_pending_chat_id
+        promise_content = promise.content
 
     await callback.message.edit_text(
         f"✅ قول #{promise_id} تایید شد. حالا قول‌دهنده می‌تونه ادعای انجام بده.",
@@ -620,6 +622,7 @@ async def promise_accepted(callback: CallbackQuery, callback_data: ReceiverConfi
         giver_pending_chat_id=giver_pending_chat_id,
         acceptor_name=callback.from_user.full_name,
         promise_id=promise_id,
+        promise_content=promise_content,
     )
 
 
@@ -647,13 +650,14 @@ async def promise_rejected(callback: CallbackQuery, callback_data: ReceiverConfi
         giver_id = promise.giver_id
         giver_pending_message_id = promise.giver_pending_message_id
         giver_pending_chat_id = promise.giver_pending_chat_id
+        promise_content = promise.content
 
     await callback.message.edit_text(
         f"❌ قول #{promise_id} رد شد.",
     )
 
     # Try to edit giver's pending message; fallback to new message
-    rejected_text = f"❌ {escape_html(callback.from_user.full_name)} قول #{promise_id} رو رد کرد."
+    rejected_text = f"❌ {escape_html(callback.from_user.full_name)} قول #{promise_id} رو رد کرد:\n<blockquote>{escape_html(promise_content)}</blockquote>"
     if giver_pending_message_id and giver_pending_chat_id:
         try:
             await callback.bot.edit_message_text(
@@ -858,17 +862,18 @@ async def mark_broken(callback: CallbackQuery, callback_data: BrokenCallback) ->
 
         giver_id = promise.giver_id
         receiver_id = promise.receiver_id
+        promise_content = promise.content
 
     # Edit giver's message
     await callback.message.edit_text(
         f"💔 قول #{promise_id} ثبت نشد. خیلی بد نیس، دفعه بعد میری! 💪",
     )
 
-    # Notify receiver
+    # Notify receiver with promise content
     try:
         await callback.bot.send_message(
             chat_id=receiver_id,
-            text=f"💔 قول #{promise_id} توسط قول‌دهنده به عنوان نقض‌شده ثبت شد.",
+            text=f"💔 قول #{promise_id} توسط قول‌دهنده به عنوان نقض‌شده ثبت شد:\n<blockquote>{escape_html(promise_content)}</blockquote>",
         )
     except Exception as e:
         logger.warning("Could not notify receiver %s: %s", receiver_id, e)
@@ -1161,9 +1166,37 @@ async def group_promise_content_received(message: Message, state: FSMContext) ->
 
 @router.callback_query(ConfirmPromiseCallback.filter(F.action == "yes"), GroupPromiseStates.waiting_for_confirmation)
 async def group_promise_confirmed(callback: CallbackQuery, state: FSMContext) -> None:
-    """Confirm group promise - skip deadline/target, create PENDING directly."""
+    """Confirm group promise - move to deadline selection."""
     await callback.answer()
 
+    await state.set_state(GroupPromiseStates.waiting_for_deadline_choice)
+    await callback.message.edit_text(
+        "مهلت زمانی داره؟",
+        reply_markup=deadline_choice_keyboard(),
+    )
+
+
+@router.callback_query(DeadlineCallback.filter(F.action.in_({"tomorrow", "week", "month", "none"})), GroupPromiseStates.waiting_for_deadline_choice)
+async def group_deadline_quick_choice(callback: CallbackQuery, callback_data: DeadlineCallback, state: FSMContext) -> None:
+    """Group flow: quick deadline option."""
+    await callback.answer()
+
+    now = datetime.now(timezone.utc)
+    if callback_data.action == "tomorrow":
+        deadline = now + timedelta(days=1)
+        deadline = deadline.replace(hour=23, minute=59, second=0)
+    elif callback_data.action == "week":
+        deadline = now + timedelta(weeks=1)
+        deadline = deadline.replace(hour=23, minute=59, second=0)
+    elif callback_data.action == "month":
+        deadline = now + timedelta(days=30)
+        deadline = deadline.replace(hour=23, minute=59, second=0)
+    else:  # none
+        deadline = None
+
+    await state.update_data(deadline=deadline)
+
+    # Target already known from /promise @user, create promise directly
     data = await state.get_data()
     content = data.get("content", "")
     target_user_id = data.get("target_user_id")
@@ -1182,19 +1215,23 @@ async def group_promise_confirmed(callback: CallbackQuery, state: FSMContext) ->
             target_type=TargetType.FRIEND,
             receiver_id=target_user_id,
             status=PromiseStatus.PENDING,
-            deadline=None,
+            deadline=deadline,
         )
         promise_id = promise.id
+
+    # Get target user for display name
+    async with get_session() as session:
+        target_user = await get_user_by_id(session, target_user_id)
+    target_display_name = target_user.display_name if target_user else str(target_user_id)
+
+    deadline_text = ""
+    if deadline:
+        deadline_text = f"\n⏰ مهلت: {format_jalali_short(deadline)}"
 
     await state.clear()
 
     # Try to DM the receiver
     try:
-        # Get target user for display name
-        async with get_session() as session:
-            target_user = await get_user_by_id(session, target_user_id)
-        target_display_name = target_user.display_name if target_user else str(target_user_id)
-        
         await callback.bot.send_message(
             chat_id=target_user_id,
             text=(
@@ -1205,7 +1242,7 @@ async def group_promise_confirmed(callback: CallbackQuery, state: FSMContext) ->
             reply_markup=receiver_confirm_keyboard(promise_id),
         )
         await callback.message.edit_text(
-            f"فرستادم براش ✅ قول #{promise_id} در انتظار تایید {target_display_name}.",
+            f"فرستادم براش ✅ قول #{promise_id} در انتظار تایید {target_display_name}.{deadline_text}",
             reply_markup=back_to_main_keyboard(),
         )
         # Save message_id for edit-message flow in accept/reject

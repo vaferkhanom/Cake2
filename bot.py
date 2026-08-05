@@ -41,6 +41,18 @@ async def main():
 
     dp.include_router(promise.router)
 
+    # TODO: Implement periodic expiry job for promises with deadlines
+    # This job should run every N minutes and:
+    # 1. Find promises where deadline < now AND status IN ('confirmed', 'claimed_done')
+    # 2. Update status to EXPIRED
+    # 3. Call apply_expired_score() for each
+    # 4. Notify givers about expired promises
+    # Note: apply_expired_score exists in src/services/scoring.py but is never called
+    # Implementation options:
+    # - asyncio.create_task with a loop + asyncio.sleep
+    # - apscheduler (add to requirements.txt)
+    # - Celery/Redis for production-scale deployment
+
     await bot.set_my_commands(COMMANDS)
     await bot.set_my_commands(GROUP_COMMANDS, scope=BotCommandScopeAllGroupChats())
     await bot.delete_webhook(drop_pending_updates=True)
