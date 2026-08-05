@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1186,3 +1187,91 @@ async def test_reject_notification_includes_content():
     assert "clean house" in edit_kwargs["text"]
     assert "رد کرد" in edit_kwargs["text"]
     await eng.dispose()
+
+
+
+# ═══════════════════════════════════════════════════════════════
+# NEW TESTS: Phase 8 - Help button, forward_origin, catch-all
+# ═══════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_main_menu_has_help_button():
+    """Main menu should have 4 buttons including help."""
+    from src.handlers.promise import get_main_inline_keyboard
+    keyboard = await get_main_inline_keyboard()
+    
+    # Check that keyboard has 4 buttons
+    assert len(keyboard.inline_keyboard) == 3  # 3 rows: 1, 2, 1
+    
+    # Check help button exists
+    found_help = False
+    for row in keyboard.inline_keyboard:
+        for button in row:
+            if button.callback_data == "main:help":
+                found_help = True
+                break
+    assert found_help, "Help button with callback_data 'main:help' not found in main menu"
+
+
+@pytest.mark.asyncio
+async def test_forward_origin_user():
+    """Forward from MessageOriginUser should extract sender_user.id."""
+    from unittest.mock import AsyncMock, patch
+    from aiogram.types import MessageOriginUser, User
+    
+    # Create proper User object for MessageOriginUser
+    sender_user = User(
+        id=12345,
+        is_bot=False,
+        first_name="TestUser"
+    )
+    
+    # Create mock message with forward_origin
+    message = AsyncMock()
+    message.chat.type = "private"
+    message.text = "test"
+    message.forward_from = None
+    message.forward_origin = MessageOriginUser(
+        type="user",
+        date=datetime.now(),
+        sender_user=sender_user
+    )
+    
+    state = AsyncMock()
+    state.get_state.return_value = PromiseStates.waiting_for_friend_id
+    
+    # Mock _process_friend to avoid database calls
+    with patch("src.handlers.promise._process_friend", new_callable=AsyncMock) as mock_process:
+        from src.handlers.promise import friend_forwarded
+        await friend_forwarded(message, state)
+        
+        # Should call _process_friend with the correct ID
+        mock_process.assert_called_once()
+        call_args = mock_process.call_args
+        assert call_args[1]["friend_id"] == 12345
+
+
+@pytest.mark.asyncio
+async def test_forward_origin_hidden_user():
+    """Forward from MessageOriginHiddenUser should show privacy warning."""
+    from unittest.mock import AsyncMock, MagicMock
+    from aiogram.types import MessageOriginHiddenUser
+    
+    message = AsyncMock()
+    message.chat.type = "private"
+    message.text = "test"
+    message.forward_from = None
+    message.forward_origin = MagicMock(spec=MessageOriginHiddenUser)
+    message.forward_origin.type = "hidden_user"
+    
+    state = AsyncMock()
+    state.get_state.return_value = PromiseStates.waiting_for_friend_id
+    
+    from src.handlers.promise import friend_forwarded
+    await friend_forwarded(message, state)
+    
+    # Should send warning message about privacy
+    message.answer.assert_called_once()
+    call_args = message.answer.call_args[0][0]
+    assert "حریم خصوصی" in call_args

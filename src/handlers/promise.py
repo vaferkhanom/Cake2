@@ -145,7 +145,8 @@ async def get_main_inline_keyboard():
     builder.button(text="🤝 ثبت قول جدید", callback_data="main:create")
     builder.button(text="📋 قول‌های من", callback_data="main:list")
     builder.button(text="👤 پروفایل من", callback_data="main:profile")
-    builder.adjust(1, 2)
+    builder.button(text="📖 راهنما", callback_data="main:help")
+    builder.adjust(1, 2, 1)
     return builder.as_markup()
 
 
@@ -225,13 +226,13 @@ async def cmd_profile(message: Message) -> None:
     await message.answer(text, reply_markup=back_to_main_keyboard())
 
 
-@router.message(Command("help"))
-async def cmd_help(message: Message) -> None:
-    """Handle /help — show help text (different for group vs private)."""
-    is_group = message.chat.type in ("group", "supergroup")
-    
+# ── Help ────────────────────────────────────────────────
+
+
+async def _build_help_text(is_group: bool = False) -> str:
+    """Build help text for private or group chat."""
     if is_group:
-        text = (
+        return (
             "📖 <b>راهنمای قول‌یار (گروه)</b>\n\n"
             "در گروه‌ها می‌تونی با دو روش برای کسی قول ثبت کنی:\n\n"
             "<b>۱. با تگ کردن یوزرنیم:</b>\n"
@@ -245,7 +246,7 @@ async def cmd_help(message: Message) -> None:
             "بقیه مراحل (محتوا، مهلت، تایید) مشابه فلوی خصوصیه."
         )
     else:
-        text = (
+        return (
             "📖 <b>راهنمای قول‌یار</b>\n\n"
             "قول‌یار کمکت می‌کنه قول‌هات رو پیگیری کنی.\n\n"
             "<b>دستورات:</b>\n"
@@ -261,8 +262,22 @@ async def cmd_help(message: Message) -> None:
             "4️⃣ طرف مقابل تایید یا رد می‌کنه\n"
             "5️⃣ امتیاز بگیر! 🏆"
         )
-    
+
+
+@router.message(Command("help"))
+async def cmd_help(message: Message) -> None:
+    """Handle /help — show help text."""
+    is_group = message.chat.type in ("group", "supergroup")
+    text = await _build_help_text(is_group)
     await message.answer(text, reply_markup=back_to_main_keyboard())
+
+
+@router.callback_query(F.data == "main:help")
+async def main_help_callback(callback: CallbackQuery) -> None:
+    """Handle help button from main menu."""
+    await callback.answer()
+    text = await _build_help_text(is_group=False)
+    await callback.message.edit_text(text, reply_markup=back_to_main_keyboard())
 
 
 # ── Step 1: Receive promise content ──────────────────────
@@ -429,12 +444,28 @@ async def target_friend(callback: CallbackQuery, state: FSMContext) -> None:
 @router.message(PromiseStates.waiting_for_friend_id, F.forward_from)
 async def friend_forwarded(message: Message, state: FSMContext) -> None:
     """User forwarded a message from the friend."""
-    if not message.forward_from or not message.forward_from.id:
-        await message.answer("فوروارد درست نبود. دوباره پیامش رو فوروارد کن.")
+    # Try forward_from first (legacy, works when user has open privacy)
+    if message.forward_from and message.forward_from.id:
+        friend_id = message.forward_from.id
+        await _process_friend(message, state, friend_id=friend_id)
         return
-
-    friend_id = message.forward_from.id
-    await _process_friend(message, state, friend_id=friend_id)
+    
+    # Try forward_origin (Bot API 7.0+)
+    if message.forward_origin:
+        from aiogram.types import MessageOriginUser, MessageOriginHiddenUser
+        
+        if isinstance(message.forward_origin, MessageOriginUser):
+            friend_id = message.forward_origin.sender_user.id
+            await _process_friend(message, state, friend_id=friend_id)
+            return
+        elif isinstance(message.forward_origin, MessageOriginHiddenUser):
+            await message.answer(
+                "⚠️ این شخص حریم خصوصیش رو طوری تنظیم کرده که نمی‌تونم از فوروارد شناساییش کنم.\n\n"
+                "لطفاً یوزرنیمش رو بفرست (مثلاً @username) یا آیدی عددیش رو بده."
+            )
+            return
+    
+    await message.answer("فوروارد درست نبود. دوباره پیامش رو فوروارد کن.")
 
 
 @router.message(PromiseStates.waiting_for_friend_id, F.text)
@@ -529,7 +560,7 @@ async def _process_friend(
                     p.giver_pending_message_id = pending_msg.message_id
                     p.giver_pending_chat_id = pending_msg.chat.id
         except Exception as e:
-            logger.warning("Could not DM receiver %s: %s", receiver, e)
+            logger.exception("Could not DM receiver %s (promise_id=%s): %s", receiver, promise_id, e)
             can_dm = False
 
     if not can_dm:
@@ -1258,5 +1289,20 @@ async def group_deadline_quick_choice(callback: CallbackQuery, callback_data: De
         await callback.message.edit_text(
             f"هنوز این کاربر با من آشنا نشده 😅\n"
             f"این لینک رو براش بفرست: https://t.me/{bot_username}?start=promise_{promise_id}",
+            reply_markup=back_to_main_keyboard(),
+        )
+
+# ── Catch-all for lost FSM state ────────────────────────────
+
+
+@router.message(F.chat.type == "private")
+async def catch_all_private(message: Message, state: FSMContext) -> None:
+    """Catch-all for private messages that don't match any handler/state."""
+    current_state = await state.get_state()
+    if current_state is None:
+        # User has no active FSM state - likely lost state after restart
+        await message.answer(
+            "🙏 به نظر می‌رسه یه‌جای کار قطع شده.\n\n"
+            "لطفاً از /start دوباره شروع کن.",
             reply_markup=back_to_main_keyboard(),
         )
