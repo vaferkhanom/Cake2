@@ -37,11 +37,13 @@ body {
   }
 }
 
-/* Respect Telegram theme: dark mode soft dark bg */
-@media (prefers-color-scheme: dark) {
-  body {
-    @apply bg-bg-dark text-ink;
-  }
+/* Dark mode support via .dark class on <html> */
+.dark body {
+  @apply bg-bg-dark text-ink-dark;
+}
+
+.dark .skeleton {
+  @apply bg-bg-dark;
 }
 
 @media (prefers-reduced-motion: reduce) {

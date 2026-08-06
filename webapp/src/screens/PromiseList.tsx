@@ -44,22 +44,22 @@ export default function PromiseList() {
         <Link
           to="/"
           onClick={() => haptic("light")}
-          className="flex h-10 w-10 items-center justify-center rounded-2xl bg-card text-ink shadow-card"
+          className="flex h-10 w-10 items-center justify-center rounded-2xl bg-card text-ink dark:bg-card-dark dark:text-ink-dark shadow-card dark:shadow-cardDark"
         >
           <BackIcon size={20} />
         </Link>
-        <h1 className="text-xl font-extrabold">قول‌های من</h1>
+        <h1 className="text-xl font-extrabold text-ink dark:text-ink-dark">قول‌های من</h1>
       </header>
 
       {/* Tabs */}
-      <div className="flex rounded-2xl bg-card p-1 shadow-card">
+      <div className="flex rounded-2xl bg-card p-1 shadow-card dark:bg-card-dark dark:shadow-cardDark">
         {TABS.map((t) => (
           <Link
             key={t.key}
             to={`/promises/${t.key}`}
             onClick={() => haptic("light")}
             className={`relative flex-1 rounded-xl py-2 text-center text-sm font-medium transition-colors ${
-              active === t.key ? "text-white" : "text-ink-soft"
+              active === t.key ? "text-white" : "text-ink-soft dark:text-ink-darkSoft"
             }`}
           >
             {active === t.key && (
@@ -83,7 +83,7 @@ export default function PromiseList() {
             ))}
           </div>
         ) : error ? (
-          <p className="pt-10 text-center text-sm text-ink-soft">{error}</p>
+          <p className="pt-10 text-center text-sm text-ink-soft dark:text-ink-darkSoft">{error}</p>
         ) : items.length === 0 ? (
           <motion.div
             initial={{ opacity: 0, y: 12 }}
@@ -92,7 +92,7 @@ export default function PromiseList() {
             className="pt-14 text-center"
           >
             <p className="mb-1 text-4xl">📭</p>
-            <p className="font-bold text-ink-soft">هنوز قولی ثبت نکردی</p>
+            <p className="font-bold text-ink-soft dark:text-ink-darkSoft">هنوز قولی ثبت نکردی</p>
             <Link
               to="/new"
               className="mt-4 inline-block rounded-2xl bg-accent px-6 py-2.5 text-sm font-bold text-white"

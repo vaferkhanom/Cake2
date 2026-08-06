@@ -30,7 +30,7 @@ export default function PromiseDetail() {
   if (error) {
     return (
       <div className="pt-20 text-center">
-        <p className="mb-2 text-ink-soft">{error}</p>
+        <p className="mb-2 text-ink-soft dark:text-ink-darkSoft">{error}</p>
         <Link to="/" className="text-accent-deep text-sm font-bold">بازگشت</Link>
       </div>
     );
@@ -103,11 +103,11 @@ export default function PromiseDetail() {
         <Link
           to={`/promises/${promise.is_giver ? "given" : "received"}`}
           onClick={() => haptic("light")}
-          className="flex h-10 w-10 items-center justify-center rounded-2xl bg-card text-ink shadow-card"
+          className="flex h-10 w-10 items-center justify-center rounded-2xl bg-card text-ink dark:bg-card-dark dark:text-ink-dark shadow-card dark:shadow-cardDark"
         >
           <BackIcon size={20} />
         </Link>
-        <h1 className="text-xl font-extrabold">جزئیات قول</h1>
+        <h1 className="text-xl font-extrabold text-ink dark:text-ink-dark">جزئیات قول</h1>
       </header>
 
       {/* Hero card */}
@@ -117,7 +117,7 @@ export default function PromiseDetail() {
         initial={{ opacity: 0, scale: 0.96 }}
         animate={isDone ? { scale: [0, 1.15, 1] } : { opacity: 1, scale: 1 }}
         transition={isDone ? donePop.transition : { duration: 0.25, ease: "easeOut" }}
-        className={`relative overflow-hidden rounded-card bg-card p-6 shadow-card ${
+        className={`relative overflow-hidden rounded-card bg-card p-6 shadow-card dark:bg-card-dark dark:shadow-cardDark ${
           isDone ? "ring-4 ring-status-done/40" : ""
         }`}
       >
@@ -135,17 +135,17 @@ export default function PromiseDetail() {
           </motion.div>
           <div>
             <p className={`text-sm font-bold ${t.text}`}>{promise.status_text}</p>
-            <p className="text-[11px] text-ink-faint">{promise.jalali_created_at}</p>
+            <p className="text-[11px] text-ink-soft dark:text-ink-darkSoft">{promise.jalali_created_at}</p>
           </div>
         </div>
-        <p className="text-lg font-bold leading-8 text-ink">{promise.content}</p>
+        <p className="text-lg font-bold leading-8 text-ink dark:text-ink-dark">{promise.content}</p>
         {promise.jalali_deadline && (
-          <p className="mt-3 flex items-center gap-1.5 text-sm text-ink-soft">
+          <p className="mt-3 flex items-center gap-1.5 text-sm text-ink-soft dark:text-ink-darkSoft">
             <ClockIcon size={16} /> مهلت: {promise.jalali_deadline}
           </p>
         )}
         {promise.target_type === "friend" && (
-          <p className="mt-2 text-sm text-ink-soft">
+          <p className="mt-2 text-sm text-ink-soft dark:text-ink-darkSoft">
             {promise.is_giver ? `گیرنده: ${promise.receiver_name}` : `قول‌دهنده: ${promise.giver_name}`}
           </p>
         )}
@@ -194,7 +194,7 @@ export default function PromiseDetail() {
 
           {/* no actions */}
           {(promise.status === "done" || promise.status === "broken" || promise.status === "expired") && (
-            <p className="pt-2 text-center text-sm text-ink-soft">
+            <p className="pt-2 text-center text-sm text-ink-soft dark:text-ink-darkSoft">
               {promise.status === "done"
                 ? "آفرین! این قول به سرانجام رسید 🎉"
                 : promise.status === "broken"

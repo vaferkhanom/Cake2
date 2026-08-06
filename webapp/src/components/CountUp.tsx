@@ -39,7 +39,7 @@ export function Card({
       {...cardEntrance}
       whileTap={onClick ? { scale: 0.96 } : undefined}
       onClick={onClick}
-      className={`rounded-card bg-card p-4 shadow-card ${className}`}
+      className={`rounded-card bg-card p-4 shadow-card dark:bg-card-dark dark:shadow-cardDark ${className}`}
     >
       {children}
     </Tag>

@@ -1,6 +1,7 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
+  darkMode: "class",
   theme: {
     extend: {
       colors: {
@@ -18,6 +19,7 @@ export default {
         card: {
           DEFAULT: "#FFFFFF",
           soft: "#FFF9FB",
+          dark: "#2A2530", // dark mode card background
         },
         status: {
           pending: "#F5B971", // soft amber
@@ -31,6 +33,9 @@ export default {
           DEFAULT: "#3D3440", // warm dark text
           soft: "#8A7F8C",
           faint: "#BCB3BE",
+          dark: "#F0EBF5", // dark mode text
+          darkSoft: "#A8A0B8", // dark mode soft text
+          darkFaint: "#6E6878", // dark mode faint text
         },
       },
       borderRadius: {
@@ -40,6 +45,8 @@ export default {
       boxShadow: {
         card: "0 8px 24px rgba(0,0,0,0.06)",
         float: "0 4px 12px rgba(242,107,154,0.25)",
+        cardDark: "0 8px 24px rgba(0,0,0,0.3)",
+        floatDark: "0 4px 12px rgba(242,107,154,0.35)",
       },
       fontFamily: {
         vazir: ["Vazirmatn", "Tahoma", "sans-serif"],

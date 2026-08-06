@@ -6,6 +6,7 @@ import PromiseList from "./screens/PromiseList";
 import PromiseDetail from "./screens/PromiseDetail";
 import NewPromise from "./screens/NewPromise";
 import Profile from "./screens/Profile";
+import { ThemeProvider } from "./lib/useTheme.tsx";
 
 export default function App() {
   const location = useLocation();
@@ -16,16 +17,18 @@ export default function App() {
   }, [location.pathname]);
 
   return (
-    <div className="mx-auto min-h-screen max-w-md px-4 pb-28 pt-6">
-      <AnimatePresence mode="wait">
-        <Routes location={location} key={location.pathname}>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/promises/:type" element={<PromiseList />} />
-          <Route path="/promise/:id" element={<PromiseDetail />} />
-          <Route path="/new" element={<NewPromise />} />
-          <Route path="/profile" element={<Profile />} />
-        </Routes>
-      </AnimatePresence>
-    </div>
+    <ThemeProvider>
+      <div className="mx-auto min-h-screen max-w-md px-4 pb-28 pt-6">
+        <AnimatePresence mode="wait">
+          <Routes location={location} key={location.pathname}>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/promises/:type" element={<PromiseList />} />
+            <Route path="/promise/:id" element={<PromiseDetail />} />
+            <Route path="/new" element={<NewPromise />} />
+            <Route path="/profile" element={<Profile />} />
+          </Routes>
+        </AnimatePresence>
+      </div>
+    </ThemeProvider>
   );
 }

@@ -40,22 +40,22 @@ export default function PromiseCard({
       transition={{ duration: 0.2, ease: "easeOut", delay: index * 0.05 }}
       whileTap={{ scale: 0.96 }}
       onClick={onClick}
-      className="mb-3 cursor-pointer rounded-card bg-card p-4 shadow-card"
+      className="mb-3 cursor-pointer rounded-card bg-card p-4 shadow-card dark:bg-card-dark dark:shadow-cardDark"
     >
       <div className="flex items-start gap-3">
         <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${t.color}`}>
           <Icon size={22} className="text-white" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="mb-0.5 line-clamp-2 text-sm font-medium leading-6 text-ink">
+          <p className="mb-0.5 line-clamp-2 text-sm font-medium leading-6 text-ink dark:text-ink-dark">
             {promise.content}
           </p>
-          <p className="text-xs text-ink-soft">
+          <p className="text-xs text-ink-soft dark:text-ink-darkSoft">
             {promise.status_text}
             {promise.jalali_deadline ? ` · مهلت: ${promise.jalali_deadline}` : ""}
           </p>
           {promise.target_type === "friend" && (
-            <p className="mt-1 text-[11px] text-ink-faint">
+            <p className="mt-1 text-[11px] text-ink-faint dark:text-ink-darkFaint">
               {promise.is_giver ? `به ${promise.receiver_name}` : `از ${promise.giver_name}`}
             </p>
           )}
