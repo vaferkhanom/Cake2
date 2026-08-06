@@ -1,7 +1,7 @@
-"""Phase 5: Add score/streak to User, update PromiseStatus enum, add deadline/claim fields
+"""Phase 5: Add score/streak to User, update PromiseStatus enum
 
 Revision ID: a75af508a777
-Revises: afcb6cc74ab8
+Revises: 9d8e7f6a5b4c
 Create Date: 2026-08-04 10:06:01.943139
 """
 from typing import Sequence, Union
