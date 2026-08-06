@@ -1,0 +1,27 @@
+# ── Stage 1: build the Mini App webapp ────────────────────────────────────
+FROM node:20-alpine AS webapp-build
+WORKDIR /app/webapp
+COPY webapp/package.json webapp/package-lock.json* ./
+RUN npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+COPY webapp/ ./
+RUN npm run build
+
+# ── Stage 2: Python runtime (FastAPI + static webapp) ─────────────────────
+FROM python:3.12-slim AS runtime
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY src/ ./src/
+COPY api/ ./api/
+COPY alembic/ ./alembic/
+COPY alembic.ini ./
+# Built webapp from stage 1 → served by FastAPI at /
+COPY --from=webapp-build /app/webapp/dist ./webapp/dist
+
+EXPOSE 8000
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
