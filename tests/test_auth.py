@@ -39,9 +39,14 @@ def test_validate_ok():
 
 
 def test_validate_ok_urlencoded_user():
-    """Telegram sends the user field URL-encoded; hash covers the raw string."""
-    user = urllib.parse.quote_plus('{"id": 42, "first_name": "Ali"}')
-    data = _sign({"auth_date": str(int(time.time())), "user": user})
+    """Telegram sends the user field URL-encoded; hash covers the *decoded* value per spec."""
+    # Real Telegram: signs with decoded values, but sends URL-encoded in initData
+    user_json = '{"id": 42, "first_name": "Ali"}'
+    user_encoded = urllib.parse.quote_plus(user_json)
+    # Sign with DECODED value (what Telegram actually does)
+    data = _sign({"auth_date": str(int(time.time())), "user": user_json})
+    # But send URL-encoded in the query string (what Telegram actually sends)
+    data["user"] = user_encoded
     qs = "&".join(f"{k}={v}" for k, v in data.items())
     out = validate_init_data(qs, BOT_TOKEN)
     u = extract_user(out)
@@ -76,11 +81,11 @@ def test_validate_expired():
         validate_init_data(qs, BOT_TOKEN, max_age=3600)
 
 
-def test_parse_init_data_keeps_raw_encoding():
-    """parse_init_data must NOT decode — the hash covers the raw string."""
+def test_parse_init_data_decodes_values():
+    """parse_init_data MUST decode — the hash covers the decoded values per Telegram spec."""
     qs = "user=%7B%22id%22%3A%207%7D&auth_date=123"
     data = parse_init_data(qs)
-    assert data["user"] == "%7B%22id%22%3A%207%7D"
+    assert data["user"] == '{"id": 7}'
     assert data["auth_date"] == "123"
 
 

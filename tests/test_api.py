@@ -56,20 +56,22 @@ def client():
 
 
 def _init_data(user_id: int, first_name: str = "Ali", username: str = "ali") -> str:
+    # Telegram's WebApp signs the hash using the *decoded* field values
+    # But sends the initData with URL-encoded values
+    user_json = '{"id": %d, "first_name": "%s", "last_name": "", "username": "%s", "language_code": "fa"}' % (user_id, first_name, username)
+    
     payload = {
         "auth_date": str(int(time.time())),
         "query_id": "AAHdF6IQAAAAAN0XohDhrOrc",
-        # URL-encode the user JSON exactly like Telegram's WebApp does
-        "user": urllib.parse.quote_plus(
-            '{"id": %d, "first_name": "%s", "last_name": "", "username": "%s", "language_code": "fa"}'
-            % (user_id, first_name, username)
-        ),
+        "user": user_json,  # decoded for signing
     }
     items = sorted((k, v) for k, v in payload.items())
     dcs = "\n".join(f"{k}={v}" for k, v in items)
     secret = _compute_secret_key(BOT_TOKEN)
     payload["hash"] = _compute_hash(dcs, secret)
-    return "&".join(f"{k}={v}" for k, v in payload.items())
+    
+    # Now URL-encode the values for the query string (what Telegram actually sends)
+    return "&".join(f"{k}={urllib.parse.quote(v, safe='')}" for k, v in payload.items())
 
 
 def _headers(user_id: int = USER_ID, first_name: str = "Ali", username: str = "ali") -> dict:
@@ -99,14 +101,18 @@ def test_me_rejects_bad_token(client):
 
 
 def test_me_rejects_expired(client):
-    payload = _init_data(USER_ID)
-    data = dict(x.split("=", 1) for x in payload.split("&"))
-    data["auth_date"] = str(int(time.time()) - 100000)
-    items = sorted((k, v) for k, v in data.items())
+    # Build expired initData properly: sign with decoded values, send URL-encoded
+    user_json = '{"id": %d, "first_name": "%s", "last_name": "", "username": "%s", "language_code": "fa"}' % (USER_ID, "Ali", "ali")
+    payload = {
+        "auth_date": str(int(time.time()) - 100000),
+        "query_id": "AAHdF6IQAAAAAN0XohDhrOrc",
+        "user": user_json,
+    }
+    items = sorted((k, v) for k, v in payload.items())
     dcs = "\n".join(f"{k}={v}" for k, v in items)
     secret = _compute_secret_key(BOT_TOKEN)
-    data["hash"] = _compute_hash(dcs, secret)
-    qs = "&".join(f"{k}={v}" for k, v in data.items())
+    payload["hash"] = _compute_hash(dcs, secret)
+    qs = "&".join(f"{k}={urllib.parse.quote(v, safe='')}" for k, v in payload.items())
     r = client.get("/api/me", headers={"Authorization": f"tma {qs}"})
     assert r.status_code == 401
 
