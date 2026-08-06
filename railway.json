@@ -5,7 +5,7 @@
     "dockerfilePath": "Dockerfile.miniapp"
   },
   "deploy": {
-    "startCommand": "sh -c \"echo '=== Running alembic upgrade heads ===' && alembic upgrade heads -v 2>&1 && echo '=== Checking tables ===' && python3 -c 'import asyncpg, os; import asyncio; async def check(): conn = await asyncpg.connect(os.environ[\"DATABASE_URL\"]); rows = await conn.fetch(\"SELECT column_name FROM information_schema.columns WHERE table_name = \\\"promises\\\" ORDER BY ordinal_position\"); await conn.close(); print(\"Columns:\", [r[\\\"column_name\\\"] for r in rows])' 2>&1 && echo '=== Starting uvicorn ===' && uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}\"",
+    "startCommand": "sh -c \"echo '=== Running alembic upgrade heads ===' && alembic upgrade heads -v 2>&1 && echo '=== Checking tables ===' && python3 -c 'import asyncpg, os, asyncio; async def check(): conn = await asyncpg.connect(os.environ[\"DATABASE_URL\"]); rows = await conn.fetch(\"SELECT column_name FROM information_schema.columns WHERE table_name = \\\"promises\\\" ORDER BY ordinal_position\"); await conn.close(); print(\"Columns:\", [r[\"column_name\"] for r in rows]); asyncio.run(check())' 2>&1 && echo '=== Starting uvicorn ===' && uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}\"",
     "healthcheckPath": "/api/health",
     "healthcheckTimeout": 120,
     "restartPolicyType": "ON_FAILURE",
