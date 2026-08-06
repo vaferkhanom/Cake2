@@ -1,6 +1,7 @@
 """Database session management for Promise Bot."""
 
 from contextlib import asynccontextmanager
+from datetime import datetime
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import select, update
@@ -122,7 +123,7 @@ async def create_promise(
     target_type: TargetType,
     receiver_id: int | None,
     status: PromiseStatus,
-    deadline: str | None = None,  # Also accepts datetime objects
+    deadline: datetime | None = None,  # Also accepts datetime objects (backward-compatible)
 ) -> Promise:
     """Create a new promise with per-giver promise_id and retry on race condition. Session commit handled by caller."""
     from sqlalchemy import func
