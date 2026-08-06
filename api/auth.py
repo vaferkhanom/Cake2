@@ -3,7 +3,7 @@
 https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
 
 The client sends the raw `Telegram.WebApp.initData` query string in the
-`Authorization: tma <initData>` header. We verify the `hash` field:
+`Authorization: tma *** header. We verify the `hash` field:
     secret_key = HMAC_SHA256(key="WebAppData", msg=bot_token)
     data_check_string = sorted fields (excluding hash) joined with "\\n"
     expected_hash = hex(HMAC_SHA256(key=secret_key, msg=data_check_string))
@@ -45,18 +45,19 @@ def _compute_hash(data_check_string: str, secret_key: bytes) -> str:
 
 
 def parse_init_data(init_data: str) -> dict:
-    """Parse the initData query string into a dict of RAW values.
+    """Parse the initData query string into a dict of URL-DECODED values.
 
-    Values are NOT URL-decoded here: Telegram computes the data_check_string
-    hash over the raw (still-encoded) values, so we must keep them as-is.
-    Decoding happens later in extract_user() for the fields we read.
+    Per Telegram's official spec, the data_check_string hash is computed
+    over the *decoded* field values (e.g. the `user` field's JSON, not its
+    percent-encoded form). Every reference implementation (JS, PHP, C#,
+    Elixir) decodes each value before joining it into the check string.
     """
     out: dict[str, str] = {}
     for pair in init_data.split("&"):
         if not pair:
             continue
         key, _, value = pair.partition("=")
-        out[key] = value
+        out[key] = urllib.parse.unquote_plus(value)
     return out
 
 
@@ -94,10 +95,14 @@ def validate_init_data(init_data: str, bot_token: str, max_age: int | None = Non
 
 
 def extract_user(data: dict) -> TelegramUser:
-    """Parse the `user` JSON field into a TelegramUser."""
+    """Parse the `user` JSON field into a TelegramUser.
+
+    `data` comes from parse_init_data(), which already URL-decodes values,
+    so `raw` here is already plain JSON text.
+    """
     raw = data.get("user", "{}")
     try:
-        obj = json.loads(urllib.parse.unquote_plus(raw))
+        obj = json.loads(raw)
     except (TypeError, json.JSONDecodeError):
         obj = {}
     return TelegramUser(
