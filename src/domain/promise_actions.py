@@ -56,7 +56,15 @@ class PromiseNotifier(Protocol):
 
     async def on_promise_created(self, promise: Promise, giver_name: str, invite_link: str | None = None) -> None: ...
     async def on_promise_accepted(self, promise: Promise, acceptor_name: str) -> None: ...
-    async def on_promise_rejected(self, promise_id: int, giver_id: int, content: str, rejector_name: str) -> None: ...
+    async def on_promise_rejected(
+        self,
+        promise_id: int,
+        giver_id: int,
+        content: str,
+        rejector_name: str,
+        giver_pending_message_id: int | None = None,
+        giver_pending_chat_id: int | None = None,
+    ) -> None: ...
     async def on_claimed_done(self, promise: Promise, giver_name: str) -> None: ...
     async def on_confirm_done(self, promise: Promise, confirmer_name: str) -> None: ...
     async def on_disputed(self, promise: Promise, disputer_name: str) -> None: ...
@@ -70,7 +78,15 @@ class NoopNotifier:
 
     async def on_promise_created(self, promise: Promise, giver_name: str, invite_link: str | None = None) -> None: ...
     async def on_promise_accepted(self, promise: Promise, acceptor_name: str) -> None: ...
-    async def on_promise_rejected(self, promise_id: int, giver_id: int, content: str, rejector_name: str) -> None: ...
+    async def on_promise_rejected(
+        self,
+        promise_id: int,
+        giver_id: int,
+        content: str,
+        rejector_name: str,
+        giver_pending_message_id: int | None = None,
+        giver_pending_chat_id: int | None = None,
+    ) -> None: ...
     async def on_claimed_done(self, promise: Promise, giver_name: str) -> None: ...
     async def on_confirm_done(self, promise: Promise, confirmer_name: str) -> None: ...
     async def on_disputed(self, promise: Promise, disputer_name: str) -> None: ...
@@ -207,6 +223,8 @@ async def reject_promise(
 
     giver_id = promise.giver_id
     content = promise.content
+    pending_msg_id = promise.giver_pending_message_id
+    pending_chat_id = promise.giver_pending_chat_id
     await session.delete(promise)
     await session.flush()
     if notifier:
@@ -216,8 +234,13 @@ async def reject_promise(
             giver_id=giver_id,
             content=content,
             rejector_name=str(actor_id),
+            giver_pending_message_id=pending_msg_id,
+            giver_pending_chat_id=pending_chat_id,
         )
-    return ActionResult(ok=True, deleted=True, promise=None)
+    return ActionResult(
+        ok=True, deleted=True, promise=None,
+        details={"giver_id": giver_id, "content": content},
+    )
 
 
 # ── Claim done / broken (giver side) ─────────────────────────────────────────
@@ -228,8 +251,14 @@ async def claim_done(
     *,
     actor_id: int,
     notifier: PromiseNotifier | None = None,
+    message_id: int | None = None,
+    chat_id: int | None = None,
 ) -> ActionResult:
-    """Giver claims a CONFIRMED promise done -> CLAIMED_DONE."""
+    """Giver claims a CONFIRMED promise done -> CLAIMED_DONE.
+
+    ``message_id``/``chat_id`` are transport metadata (the message the claim was
+    made from) used by the bot to edit it cross-chat later; the API omits them.
+    """
     promise = await _load_promise(session, promise_id)
     if not promise:
         return ActionResult(ok=False, error="قول پیدا نشد!")
@@ -240,6 +269,10 @@ async def claim_done(
 
     promise.status = PromiseStatus.CLAIMED_DONE
     promise.claimed_done_at = datetime.now(timezone.utc)
+    if message_id is not None:
+        promise.giver_claim_message_id = message_id
+    if chat_id is not None:
+        promise.giver_claim_chat_id = chat_id
     await session.flush()
     if notifier:
         await notifier.on_claimed_done(promise, giver_name=str(actor_id))

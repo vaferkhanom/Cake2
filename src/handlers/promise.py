@@ -24,6 +24,8 @@ from src.database.session import (
     get_user_by_username,
     get_or_create_user,
 )
+from src.domain import promise_actions as pa
+from src.notifications.telegram import TelegramNotifier
 from src.utils.format import escape_html, format_jalali_date, format_jalali_short, make_mention
 from src.keyboards.inline import (
     ConfirmPromiseCallback,
@@ -590,45 +592,6 @@ async def _process_friend(
         )
 
 
-# ── Shared Helpers ────────────────────────────────────────────
-
-async def _notify_promise_confirmed(
-    bot: Bot,
-    giver_id: int,
-    giver_pending_message_id: int | None,
-    giver_pending_chat_id: int | None,
-    acceptor_name: str,
-    promise_id: int,
-    promise_content: str,
-) -> None:
-    """
-    Send a confirmation notification to the giver when a promise is accepted.
-    Includes promise content for context. Does NOT include claim_done_keyboard.
-    """
-    text = f"🎉 {escape_html(acceptor_name)} قول #{promise_id} رو تایید کرد:\n<blockquote>{escape_html(promise_content)}</blockquote>"
-    
-    # Try to edit the giver's pending message first
-    if giver_pending_message_id and giver_pending_chat_id:
-        try:
-            await bot.edit_message_text(
-                chat_id=giver_pending_chat_id,
-                message_id=giver_pending_message_id,
-                text=text,
-            )
-            return
-        except Exception as e:
-            logger.warning(
-                "Could not edit giver pending message %s/%s: %s",
-                giver_pending_chat_id, giver_pending_message_id, e
-            )
-    
-    # Fallback: send new message
-    try:
-        await bot.send_message(chat_id=giver_id, text=text)
-    except Exception as e:
-        logger.warning("Could not notify giver %s: %s", giver_id, e)
-
-
 # ── Step 5: Receiver accepts/rejects ─────────────────────
 
 @router.callback_query(ReceiverConfirmCallback.filter(F.action == "accept"))
@@ -640,36 +603,20 @@ async def promise_accepted(callback: CallbackQuery, callback_data: ReceiverConfi
         return
 
     promise_id = callback_data.promise_id
+    notifier = TelegramNotifier(callback.bot)
 
     async with get_session() as session:
-        promise = await session.get(Promise, promise_id)
-        if not promise:
-            await callback.answer("قول پیدا نشد!", show_alert=True)
+        res = await pa.accept_promise(
+            session, promise_id,
+            actor_id=callback.from_user.id,
+            notifier=notifier,
+        )
+        if not res.ok:
+            await callback.answer(res.error, show_alert=True)
             return
-
-        if promise.receiver_id != callback.from_user.id:
-            await callback.answer("این دکمه برای شما نیست", show_alert=True)
-            return
-
-        promise.status = PromiseStatus.CONFIRMED
-        giver_id = promise.giver_id
-        giver_pending_message_id = promise.giver_pending_message_id
-        giver_pending_chat_id = promise.giver_pending_chat_id
-        promise_content = promise.content
 
     await callback.message.edit_text(
         f"✅ قول #{promise_id} تایید شد. حالا قول‌دهنده می‌تونه ادعای انجام بده.",
-    )
-
-    # Use shared helper for simple confirmation notification (no claim keyboard)
-    await _notify_promise_confirmed(
-        bot=callback.bot,
-        giver_id=giver_id,
-        giver_pending_message_id=giver_pending_message_id,
-        giver_pending_chat_id=giver_pending_chat_id,
-        acceptor_name=callback.from_user.full_name,
-        promise_id=promise_id,
-        promise_content=promise_content,
     )
 
 
@@ -682,47 +629,21 @@ async def promise_rejected(callback: CallbackQuery, callback_data: ReceiverConfi
         return
 
     promise_id = callback_data.promise_id
+    notifier = TelegramNotifier(callback.bot)
 
     async with get_session() as session:
-        promise = await session.get(Promise, promise_id)
-        if not promise:
-            await callback.answer("قول پیدا نشد!", show_alert=True)
+        res = await pa.reject_promise(
+            session, promise_id,
+            actor_id=callback.from_user.id,
+            notifier=notifier,
+        )
+        if not res.ok:
+            await callback.answer(res.error, show_alert=True)
             return
-
-        if promise.receiver_id != callback.from_user.id:
-            await callback.answer("این دکمه برای شما نیست", show_alert=True)
-            return
-
-        # Save data before deletion
-        giver_id = promise.giver_id
-        giver_pending_message_id = promise.giver_pending_message_id
-        giver_pending_chat_id = promise.giver_pending_chat_id
-        promise_content = promise.content
-
-        # Delete promise record completely
-        await session.delete(promise)
 
     await callback.message.edit_text(
         f"❌ قول #{promise_id} رد شد.",
     )
-
-    # Notify giver (using saved data, promise is already deleted)
-    rejected_text = f"❌ {escape_html(callback.from_user.full_name)} قول #{promise_id} رو رد کرد:\n<blockquote>{escape_html(promise_content)}</blockquote>"
-    if giver_pending_message_id and giver_pending_chat_id:
-        try:
-            await callback.bot.edit_message_text(
-                chat_id=giver_pending_chat_id,
-                message_id=giver_pending_message_id,
-                text=rejected_text,
-            )
-            return
-        except Exception as e:
-            logger.warning("Could not edit giver pending message %s/%s: %s", giver_pending_chat_id, giver_pending_message_id, e)
-
-    try:
-        await callback.bot.send_message(chat_id=giver_id, text=rejected_text)
-    except Exception as e:
-        logger.warning("Could not notify giver %s: %s", giver_id, e)
 
 
 # ── Claim Done / Confirm Done / Broken / Resolve Dispute ───────────────────────
@@ -736,45 +657,24 @@ async def claim_done(callback: CallbackQuery, callback_data: ClaimDoneCallback) 
         return
 
     promise_id = callback_data.promise_id
+    notifier = TelegramNotifier(callback.bot)
 
     async with get_session() as session:
-        promise = await session.get(Promise, promise_id)
-        if not promise:
-            await callback.answer("قول پیدا نشد!", show_alert=True)
+        res = await pa.claim_done(
+            session, promise_id,
+            actor_id=callback.from_user.id,
+            notifier=notifier,
+            message_id=callback.message.message_id,
+            chat_id=callback.message.chat.id,
+        )
+        if not res.ok:
+            await callback.answer(res.error, show_alert=True)
             return
-
-        if promise.giver_id != callback.from_user.id:
-            await callback.answer("فقط قول‌دهنده می‌تونه ادعای انجام بده", show_alert=True)
-            return
-
-        if promise.status != PromiseStatus.CONFIRMED:
-            await callback.answer("فقط قول‌های تایید شده قابل ادعای انجام‌ان", show_alert=True)
-            return
-
-        promise.status = PromiseStatus.CLAIMED_DONE
-        promise.claimed_done_at = datetime.now(timezone.utc)
-        # Store message IDs for cross-chat editing
-        promise.giver_claim_message_id = callback.message.message_id
-        promise.giver_claim_chat_id = callback.message.chat.id
 
     # Edit giver's message to show waiting for confirmation
     await callback.message.edit_text(
         f"⏳ ادعای انجام قول #{promise_id} ارسال شد. در انتظار تایید طرف مقابل...",
     )
-
-    # Notify receiver with confirm/dispute buttons
-    try:
-        await callback.bot.send_message(
-            chat_id=promise.receiver_id,
-            text=(
-                f"⚠️ {make_mention(callback.from_user.id, callback.from_user.full_name)} می‌گه قول #{promise_id} رو انجام داده:\n\n"
-                f"<blockquote>{escape_html(promise.content)}</blockquote>\n\n"
-                f"تایید می‌کنی؟"
-            ),
-            reply_markup=receiver_confirm_done_keyboard(promise_id),
-        )
-    except Exception as e:
-        logger.warning("Could not notify receiver %s: %s", promise.receiver_id, e)
 
 
 @router.callback_query(ReceiverConfirmDoneCallback.filter(F.action == "confirm_done"))
@@ -786,45 +686,22 @@ async def confirm_done(callback: CallbackQuery, callback_data: ReceiverConfirmDo
         return
 
     promise_id = callback_data.promise_id
+    notifier = TelegramNotifier(callback.bot)
 
     async with get_session() as session:
-        promise = await session.get(Promise, promise_id)
-        if not promise:
-            await callback.answer("قول پیدا نشد!", show_alert=True)
+        res = await pa.confirm_done(
+            session, promise_id,
+            actor_id=callback.from_user.id,
+            notifier=notifier,
+        )
+        if not res.ok:
+            await callback.answer(res.error, show_alert=True)
             return
-
-        if promise.receiver_id != callback.from_user.id:
-            await callback.answer("فقط گیرنده قول می‌تونه تایید کنه", show_alert=True)
-            return
-
-        if promise.status != PromiseStatus.CLAIMED_DONE:
-            await callback.answer("این قول در وضعیت قابل تایید نیست", show_alert=True)
-            return
-
-        promise.status = PromiseStatus.DONE
-        promise.resolved_at = datetime.now(timezone.utc)
-
-        # Update giver's score and streak
-        await apply_done_score(session, promise.giver_id, promise)
-        giver_id = promise.giver_id
-        giver_claim_message_id = promise.giver_claim_message_id
-        giver_claim_chat_id = promise.giver_claim_chat_id
 
     # Edit receiver's message
     await callback.message.edit_text(
         f"✅ قول #{promise_id} تایید شد و به عنوان انجام‌شده ثبت گردید.",
     )
-
-    # Edit giver's original claim message cross-chat
-    if giver_claim_message_id and giver_claim_chat_id:
-        try:
-            await callback.bot.edit_message_text(
-                chat_id=giver_claim_chat_id,
-                message_id=giver_claim_message_id,
-                text=f"🎉 {make_mention(callback.from_user.id, callback.from_user.full_name)} تایید کرد که قول #{promise_id} انجام شده!",
-            )
-        except Exception as e:
-            logger.warning("Could not edit giver message %s/%s: %s", giver_claim_chat_id, giver_claim_message_id, e)
 
 
 @router.callback_query(ReceiverConfirmDoneCallback.filter(F.action == "dispute"))
@@ -836,48 +713,22 @@ async def dispute_done(callback: CallbackQuery, callback_data: ReceiverConfirmDo
         return
 
     promise_id = callback_data.promise_id
+    notifier = TelegramNotifier(callback.bot)
 
     async with get_session() as session:
-        promise = await session.get(Promise, promise_id)
-        if not promise:
-            await callback.answer("قول پیدا نشد!", show_alert=True)
+        res = await pa.dispute_done(
+            session, promise_id,
+            actor_id=callback.from_user.id,
+            notifier=notifier,
+        )
+        if not res.ok:
+            await callback.answer(res.error, show_alert=True)
             return
-
-        if promise.receiver_id != callback.from_user.id:
-            await callback.answer("فقط گیرنده قول می‌تونه رد کنه", show_alert=True)
-            return
-
-        if promise.status != PromiseStatus.CLAIMED_DONE:
-            await callback.answer("این قول در وضعیت قابل رد نیست", show_alert=True)
-            return
-
-        promise.status = PromiseStatus.DISPUTED
-        giver_id = promise.giver_id
-        giver_claim_message_id = promise.giver_claim_message_id
-        giver_claim_chat_id = promise.giver_claim_chat_id
-
-        # Apply dispute penalty to giver
-        await apply_disputed_score(session, giver_id)
 
     # Edit receiver's message
     await callback.message.edit_text(
         f"⚠️ قول #{promise_id} به عنوان متنازع‌علیه (DISPUTED) علامت‌گذاری شد.",
     )
-
-    # Edit giver's original claim message cross-chat
-    if giver_claim_message_id and giver_claim_chat_id:
-        try:
-            await callback.bot.edit_message_text(
-                chat_id=giver_claim_chat_id,
-                message_id=giver_claim_message_id,
-                text=(
-                    f"⚠️ {make_mention(callback.from_user.id, callback.from_user.full_name)} ادعای انجام قول #{promise_id} رو رد کرد.\n"
-                    f"وضعیت: DISPUTED\n"
-                    f"می‌تونی با طرف مقابل صحبت کنی و دوباره ادعا کنی."
-                ),
-            )
-        except Exception as e:
-            logger.warning("Could not edit giver message %s/%s: %s", giver_claim_chat_id, giver_claim_message_id, e)
 
 
 @router.callback_query(BrokenCallback.filter())
@@ -889,44 +740,22 @@ async def mark_broken(callback: CallbackQuery, callback_data: BrokenCallback) ->
         return
 
     promise_id = callback_data.promise_id
+    notifier = TelegramNotifier(callback.bot)
 
     async with get_session() as session:
-        promise = await session.get(Promise, promise_id)
-        if not promise:
-            await callback.answer("قول پیدا نشد!", show_alert=True)
+        res = await pa.mark_broken(
+            session, promise_id,
+            actor_id=callback.from_user.id,
+            notifier=notifier,
+        )
+        if not res.ok:
+            await callback.answer(res.error, show_alert=True)
             return
-
-        if promise.giver_id != callback.from_user.id:
-            await callback.answer("فقط قول‌دهنده می‌تونه وضعیت رو عوض کنه", show_alert=True)
-            return
-
-        if promise.status != PromiseStatus.CONFIRMED:
-            await callback.answer("فقط قول‌های تایید شده قابل ثبت نشدنش", show_alert=True)
-            return
-
-        promise.status = PromiseStatus.BROKEN
-        promise.resolved_at = datetime.now(timezone.utc)
-
-        # Apply broken penalty
-        await apply_broken_score(session, promise.giver_id, promise)
-
-        giver_id = promise.giver_id
-        receiver_id = promise.receiver_id
-        promise_content = promise.content
 
     # Edit giver's message
     await callback.message.edit_text(
-        f"💔 قول #{promise_id} ثبت نشد. خیلی بد نیس، دفعه بعد میری! 💪",
+        f"💔 قول #{promise_id} ثبت نشد. خیلی بد نیس، دفعه بعد می‌ری! 💪",
     )
-
-    # Notify receiver with promise content
-    try:
-        await callback.bot.send_message(
-            chat_id=receiver_id,
-            text=f"💔 قول #{promise_id} توسط قول‌دهنده به عنوان نقض‌شده ثبت شد:\n<blockquote>{escape_html(promise_content)}</blockquote>",
-        )
-    except Exception as e:
-        logger.warning("Could not notify receiver %s: %s", receiver_id, e)
 
 
 @router.callback_query(ResolveDisputeCallback.filter())
@@ -938,26 +767,17 @@ async def resolve_dispute(callback: CallbackQuery, callback_data: ResolveDispute
         return
 
     promise_id = callback_data.promise_id
+    notifier = TelegramNotifier(callback.bot)
 
     async with get_session() as session:
-        promise = await session.get(Promise, promise_id)
-        if not promise:
-            await callback.answer("قول پیدا نشد!", show_alert=True)
+        res = await pa.resolve_dispute(
+            session, promise_id,
+            actor_id=callback.from_user.id,
+            notifier=notifier,
+        )
+        if not res.ok:
+            await callback.answer(res.error, show_alert=True)
             return
-
-        if promise.receiver_id != callback.from_user.id:
-            await callback.answer("فقط گیرنده قول می‌تونه این کار رو بکنه", show_alert=True)
-            return
-
-        if promise.status != PromiseStatus.DISPUTED:
-            await callback.answer("این قول در وضعیت DISPUTED نیست", show_alert=True)
-            return
-
-        promise.status = PromiseStatus.DONE
-        promise.resolved_at = datetime.now(timezone.utc)
-
-        # Resolve dispute scoring: cancel penalty + add done score
-        await resolve_dispute_to_done(session, promise.giver_id, promise)
 
     await callback.message.edit_text(
         f"✅ قول #{promise_id} تایید شد و به عنوان انجام‌شده ثبت گردید (مخالفیت حل شد).",
