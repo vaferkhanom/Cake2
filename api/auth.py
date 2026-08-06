@@ -16,6 +16,7 @@ import hashlib
 import hmac
 import json
 import time
+import urllib.parse
 from dataclasses import dataclass
 from urllib.parse import parse_qsl
 
@@ -44,8 +45,19 @@ def _compute_hash(data_check_string: str, secret_key: bytes) -> str:
 
 
 def parse_init_data(init_data: str) -> dict:
-    """Parse the initData query string into a dict (raw values)."""
-    return dict(parse_qsl(init_data, keep_blank_values=True))
+    """Parse the initData query string into a dict of RAW values.
+
+    Values are NOT URL-decoded here: Telegram computes the data_check_string
+    hash over the raw (still-encoded) values, so we must keep them as-is.
+    Decoding happens later in extract_user() for the fields we read.
+    """
+    out: dict[str, str] = {}
+    for pair in init_data.split("&"):
+        if not pair:
+            continue
+        key, _, value = pair.partition("=")
+        out[key] = value
+    return out
 
 
 def validate_init_data(init_data: str, bot_token: str, max_age: int | None = None) -> dict:
@@ -85,7 +97,7 @@ def extract_user(data: dict) -> TelegramUser:
     """Parse the `user` JSON field into a TelegramUser."""
     raw = data.get("user", "{}")
     try:
-        obj = json.loads(raw)
+        obj = json.loads(urllib.parse.unquote_plus(raw))
     except (TypeError, json.JSONDecodeError):
         obj = {}
     return TelegramUser(

@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+import urllib.parse
 from pathlib import Path
 
 import pytest
@@ -58,7 +59,11 @@ def _init_data(user_id: int, first_name: str = "Ali", username: str = "ali") -> 
     payload = {
         "auth_date": str(int(time.time())),
         "query_id": "AAHdF6IQAAAAAN0XohDhrOrc",
-        "user": '{"id": %d, "first_name": "%s", "last_name": "", "username": "%s", "language_code": "fa"}' % (user_id, first_name, username),
+        # URL-encode the user JSON exactly like Telegram's WebApp does
+        "user": urllib.parse.quote_plus(
+            '{"id": %d, "first_name": "%s", "last_name": "", "username": "%s", "language_code": "fa"}'
+            % (user_id, first_name, username)
+        ),
     }
     items = sorted((k, v) for k, v in payload.items())
     dcs = "\n".join(f"{k}={v}" for k, v in items)

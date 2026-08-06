@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import time
+import urllib.parse
 from pathlib import Path
 
 import pytest
@@ -37,6 +38,17 @@ def test_validate_ok():
     assert out["user"] == '{"id": 42, "first_name": "Ali"}'
 
 
+def test_validate_ok_urlencoded_user():
+    """Telegram sends the user field URL-encoded; hash covers the raw string."""
+    user = urllib.parse.quote_plus('{"id": 42, "first_name": "Ali"}')
+    data = _sign({"auth_date": str(int(time.time())), "user": user})
+    qs = "&".join(f"{k}={v}" for k, v in data.items())
+    out = validate_init_data(qs, BOT_TOKEN)
+    u = extract_user(out)
+    assert u.id == 42
+    assert u.first_name == "Ali"
+
+
 def test_validate_wrong_token():
     data = _sign({"auth_date": str(int(time.time())), "user": "{}"})
     qs = "&".join(f"{k}={v}" for k, v in data.items())
@@ -64,10 +76,12 @@ def test_validate_expired():
         validate_init_data(qs, BOT_TOKEN, max_age=3600)
 
 
-def test_parse_init_data_handles_url_encoding():
+def test_parse_init_data_keeps_raw_encoding():
+    """parse_init_data must NOT decode — the hash covers the raw string."""
     qs = "user=%7B%22id%22%3A%207%7D&auth_date=123"
     data = parse_init_data(qs)
-    assert data["user"] == '{"id": 7}'
+    assert data["user"] == "%7B%22id%22%3A%207%7D"
+    assert data["auth_date"] == "123"
 
 
 def test_extract_user():
