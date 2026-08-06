@@ -39,7 +39,7 @@ export default {
       },
       boxShadow: {
         card: "0 8px 24px rgba(0,0,0,0.06)",
-        float: "0 10px 30px rgba(242,107,154,0.35)",
+        float: "0 4px 12px rgba(242,107,154,0.25)",
       },
       fontFamily: {
         vazir: ["Vazirmatn", "Tahoma", "sans-serif"],

@@ -9,11 +9,21 @@ import { gentleSpring, durations } from "../motion/presets";
 
 export default function Profile() {
   const [me, setMe] = useState<MeOut | null>(null);
+  const [error, setError] = useState("");
 
   useEffect(() => backButton(() => history.back()), []);
   useEffect(() => {
-    api.me().then(setMe).catch(() => {});
+    api.me().then(setMe).catch((e) => setError(e.message));
   }, []);
+
+  if (error) {
+    return (
+      <div className="pt-20 text-center text-sm text-ink-soft">
+        <p className="mb-2">نتونستم پروفایل رو لود کنم 😔</p>
+        <p className="text-xs text-ink-faint">{error}</p>
+      </div>
+    );
+  }
 
   if (!me) {
     return (

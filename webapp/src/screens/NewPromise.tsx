@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { api } from "../lib/api";
-import { haptic, mainButton } from "../lib/telegram";
+import { haptic, mainButton, backButton } from "../lib/telegram";
 import { BackIcon, CheckIcon, HeartIcon, ListIcon } from "../components/icons";
 import { durations, easings, gentleSpring } from "../motion/presets";
 
@@ -18,13 +18,20 @@ export default function NewPromise() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  // Telegram BackButton support
+  useEffect(() => backButton(prev), [step]);
+
   const next = () => {
     haptic("light");
     setStep((s) => (s < 3 ? ((s + 1) as Step) : s));
   };
   const prev = () => {
     haptic("light");
-    setStep((s) => (s > 0 ? ((s - 1) as Step) : s));
+    if (step === 0) {
+      navigate("/");
+    } else {
+      setStep((s) => (s - 1) as Step);
+    }
   };
 
   const submit = async () => {
@@ -45,11 +52,16 @@ export default function NewPromise() {
     }
   };
 
-  // Bottom CTA per step (Telegram MainButton)
-  mainButton(step === 3 ? "ثبت قول" : "ادامه", () => (step === 3 ? submit() : next()));
-
   const canNext =
     step === 0 ? content.trim().length >= 3 : step === 2 ? target === "self" || receiver.trim().length > 0 : true;
+
+  // Telegram MainButton with cleanup + validation guard
+  useEffect(() => {
+    return mainButton(step === 3 ? "ثبت قول" : "ادامه", () => {
+      if (!canNext || busy) return;
+      return step === 3 ? submit() : next();
+    });
+  }, [step, canNext, busy]);
 
   return (
     <div className="flex flex-col gap-4">
