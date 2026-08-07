@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Route, Routes, useLocation } from "react-router-dom";
 import { AnimatePresence } from "framer-motion";
 import Dashboard from "./screens/Dashboard";
@@ -7,11 +7,12 @@ import PromiseDetail from "./screens/PromiseDetail";
 import NewPromise from "./screens/NewPromise";
 import Profile from "./screens/Profile";
 import LiveSkyBackground from "./components/LiveSkyBackground";
+import PromiseIntroScreen, { shouldShowIntro } from "./components/PromiseIntroScreen";
 
 export default function App() {
   const location = useLocation();
+  const [showIntro, setShowIntro] = useState(() => shouldShowIntro());
 
-  // RTL page transitions via AnimatePresence (mode="wait")
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [location.pathname]);
@@ -19,17 +20,20 @@ export default function App() {
   return (
     <>
       <LiveSkyBackground />
-      <div className="mx-auto min-h-screen max-w-md px-4 pb-28 pt-6">
-        <AnimatePresence mode="wait">
-          <Routes location={location} key={location.pathname}>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/promises/:type" element={<PromiseList />} />
-            <Route path="/promise/:id" element={<PromiseDetail />} />
-            <Route path="/new" element={<NewPromise />} />
-            <Route path="/profile" element={<Profile />} />
-          </Routes>
-        </AnimatePresence>
-      </div>
+      {showIntro && <PromiseIntroScreen onDone={() => setShowIntro(false)} />}
+      {!showIntro && (
+        <div className="mx-auto min-h-screen max-w-md px-4 pb-28 pt-6">
+          <AnimatePresence mode="wait">
+            <Routes location={location} key={location.pathname}>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/promises/:type" element={<PromiseList />} />
+              <Route path="/promise/:id" element={<PromiseDetail />} />
+              <Route path="/new" element={<NewPromise />} />
+              <Route path="/profile" element={<Profile />} />
+            </Routes>
+          </AnimatePresence>
+        </div>
+      )}
     </>
   );
 }

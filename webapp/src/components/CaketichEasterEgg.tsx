@@ -2,75 +2,68 @@
  * Caketich Easter Egg — pixel-art Stitch eating cake.
  *
  * Triggered by tapping the score 10 times on Profile.
- * After 60 seconds, "caketich" text drops and scatters the scene.
- * 
- * PIXEL-ART: uses Press Start 2P font, large pixel sprites,
- * and real per-pixel scatter effect.
+ * After 20 seconds, "caketich" text drops. Then tap 5 times to "eat"
+ * the text bite by bite, and exit on the 5th tap.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 // Pixel art color palette
 const C = {
   _: "transparent",
-  B: "#3B6BAA", // blue fur (body)
-  D: "#2A4F7A", // dark blue (outline/shadow)
-  L: "#6BA3D6", // light blue (belly)
-  W: "#FFFFFF", // white (eyes, teeth)
-  K: "#1A1A2E", // black (pupils, nose)
-  P: "#FFB6C1", // pink (inner ear)
-  N: "#8B6914", // brown (table)
-  T: "#A0522D", // dark brown (table leg)
-  CK: "#FFEFD5", // cake cream
-  CR: "#FF6B6B", // cake red (strawberry)
-  CB: "#8B4513", // cake brown (chocolate)
-  CG: "#90EE90", // cake green (mint)
-  H: "#5A3A1A", // hand color
-  M: "#CC3333", // mouth messy (red/cake)
-  S: "#E8D5B7", // skin tone (face area)
+  B: "#3B6BAA",
+  D: "#2A4F7A",
+  L: "#6BA3D6",
+  W: "#FFFFFF",
+  K: "#1A1A2E",
+  P: "#FFB6C1",
+  N: "#8B6914",
+  T: "#A0522D",
+  CK: "#FFEFD5",
+  CR: "#FF6B6B",
+  CB: "#8B4513",
+  CG: "#90EE90",
+  H: "#5A3A1A",
+  M: "#CC3333",
+  S: "#E8D5B7",
 };
 
-// Stitch pixel art — 16x20 grid
 const STITCH_BODY = [
-  // Row 0-2: ears
   [C._, C._, C.D, C.B, C.B, C._, C._, C._, C._, C._, C._, C.D, C.B, C.B, C._, C._],
   [C._, C.D, C.B, C.P, C.B, C.B, C._, C._, C._, C._, C.D, C.B, C.P, C.B, C.B, C._],
   [C._, C.D, C.B, C.P, C.P, C.B, C.B, C._, C._, C.D, C.B, C.P, C.P, C.B, C.B, C._],
-  // Row 3-5: head
   [C._, C._, C.D, C.B, C.B, C.B, C.B, C.B, C.B, C.B, C.B, C.B, C.B, C.B, C._, C._],
   [C._, C._, C.D, C.B, C.W, C.K, C.B, C.B, C.B, C.B, C.W, C.K, C.B, C.D, C._, C._],
   [C._, C._, C.D, C.B, C.B, C.B, C.B, C.D, C.D, C.B, C.B, C.B, C.B, C.D, C._, C._],
-  // Row 6-7: mouth area (messy!)
   [C._, C._, C._, C.D, C.B, C.B, C.M, C.M, C.M, C.B, C.B, C.B, C.D, C._, C._, C._],
   [C._, C._, C._, C._, C.D, C.M, C.W, C.W, C.M, C.B, C.B, C.D, C._, C._, C._, C._],
-  // Row 8-10: body
   [C._, C._, C._, C._, C.D, C.B, C.B, C.B, C.B, C.B, C.D, C._, C._, C._, C._, C._],
   [C._, C._, C._, C.D, C.B, C.L, C.L, C.L, C.L, C.B, C.B, C.D, C._, C._, C._, C._],
   [C._, C._, C._, C.D, C.B, C.L, C.L, C.L, C.L, C.B, C.B, C.D, C._, C._, C._, C._],
-  // Row 11-12: arm reaching for cake
   [C._, C._, C._, C.D, C.B, C.B, C.B, C.B, C.B, C.B, C.H, C.H, C.D, C._, C._, C._],
   [C._, C._, C._, C._, C.D, C.B, C.B, C.B, C.B, C.D, C._, C.H, C.H, C.D, C._, C._],
-  // Row 13: table
   [C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N],
-  // Row 14-16: cake on table
   [C._, C._, C._, C._, C._, C.CR, C.CR, C.CR, C.CR, C.CR, C._, C._, C._, C._, C._, C._],
   [C._, C._, C._, C._, C.CK, C.CK, C.CK, C.CK, C.CK, C.CK, C._, C._, C._, C._, C._, C._],
   [C._, C._, C._, C._, C.CK, C.CB, C.CK, C.CK, C.CB, C.CK, C._, C._, C._, C._, C._, C._],
-  // Row 17-19: table bottom + legs
   [C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N],
   [C.T, C._, C._, C._, C._, C._, C.T, C._, C._, C.T, C._, C._, C._, C._, C._, C.T],
   [C.T, C._, C._, C._, C._, C._, C.T, C._, C._, C.T, C._, C._, C._, C._, C._, C.T],
 ];
 
-const PIXEL = 16; // px per pixel (increased from 6)
+const PIXEL = 16;
+const TOTAL_TAPS = 5;
+const CAKETICH_TEXT = "caketich";
+// Letters to remove per tap (progressive: 2, 2, 2, 1, 1 = 8 total)
+const TAPS_LETTERS = [2, 2, 2, 1, 1];
 
 export default function CaketichEasterEgg({ onClose }: { onClose: () => void }) {
   const [elapsed, setElapsed] = useState(0);
   const [dropped, setDropped] = useState(false);
   const [scatter, setScatter] = useState(false);
+  const [tapsDone, setTapsDone] = useState(0);
   const startRef = useRef(Date.now());
 
-  // Generate stable random offsets for each pixel (for scatter effect)
   const scatterOffsets = useMemo(() => {
     return STITCH_BODY.map((row) =>
       row.map(() => ({
@@ -82,12 +75,12 @@ export default function CaketichEasterEgg({ onClose }: { onClose: () => void }) 
     );
   }, []);
 
-  // 60-second timer
+  // 20-second timer
   useEffect(() => {
     const iv = setInterval(() => {
       const sec = Math.floor((Date.now() - startRef.current) / 1000);
       setElapsed(sec);
-      if (sec >= 60 && !dropped) {
+      if (sec >= 20 && !dropped) {
         setDropped(true);
         setTimeout(() => setScatter(true), 600);
       }
@@ -95,14 +88,43 @@ export default function CaketichEasterEgg({ onClose }: { onClose: () => void }) 
     return () => clearInterval(iv);
   }, [dropped]);
 
+  // Calculate how much of the text is visible
+  const lettersVisible = useMemo(() => {
+    let removed = 0;
+    for (let i = 0; i < tapsDone; i++) {
+      removed += TAPS_LETTERS[i] || 0;
+    }
+    return Math.max(0, CAKETICH_TEXT.length - removed);
+  }, [tapsDone]);
+
+  const displayText = CAKETICH_TEXT.slice(0, lettersVisible);
+
+  // Tap handler — only works after text has dropped
+  const handleTap = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!dropped) return;
+    if (tapsDone >= TOTAL_TAPS) return;
+
+    const newTaps = tapsDone + 1;
+    setTapsDone(newTaps);
+
+    if (newTaps >= TOTAL_TAPS) {
+      // All text eaten — exit after a short delay
+      setTimeout(() => onClose(), 300);
+    }
+  }, [dropped, tapsDone, onClose]);
+
+  const canExit = dropped;
+  const remainingTaps = TOTAL_TAPS - tapsDone;
+
   return (
     <div
       className="fixed inset-0 z-50 flex flex-col items-center justify-center"
       style={{ background: "linear-gradient(180deg, #1a1040 0%, #2a1a50 50%, #3a2060 100%)" }}
-      onClick={onClose}
+      onClick={canExit ? handleTap : undefined}
     >
-      {/* Caketich text drop — pixel-art font */}
-      {dropped && (
+      {/* Caketich text drop — pixel font, eats away on tap */}
+      {dropped && lettersVisible > 0 && (
         <div
           className="absolute top-0 left-0 right-0 text-center"
           style={{
@@ -118,8 +140,24 @@ export default function CaketichEasterEgg({ onClose }: { onClose: () => void }) 
               letterSpacing: "2px",
             }}
           >
-            caketich
+            {displayText}
           </span>
+        </div>
+      )}
+
+      {/* Exit hint — pixel font */}
+      {dropped && tapsDone < TOTAL_TAPS && (
+        <div
+          className="absolute top-16 text-center"
+          style={{
+            fontFamily: "'Press Start 2P', monospace",
+            fontSize: "7px",
+            color: "#C4B8D9",
+            zIndex: 61,
+            animation: "pulse 2s ease-in-out infinite",
+          }}
+        >
+          {remainingTaps} bar bezan!
         </div>
       )}
 
@@ -130,15 +168,12 @@ export default function CaketichEasterEgg({ onClose }: { onClose: () => void }) 
             {row.map((color, x) => {
               const offset = scatterOffsets[y][x];
               const isTransparent = color === C._;
-
               let transform = "none";
               let transition = "none";
-
               if (scatter && !isTransparent) {
                 transform = `translate(${offset.tx}px, ${offset.ty}px) rotate(${offset.rot}deg)`;
                 transition = `transform 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94) ${offset.delay}ms`;
               }
-
               return (
                 <div
                   key={x}
@@ -157,7 +192,7 @@ export default function CaketichEasterEgg({ onClose }: { onClose: () => void }) 
         ))}
       </div>
 
-      {/* Eating animation indicator — pixel font */}
+      {/* Eating indicator */}
       <div
         className="mt-6 text-center"
         style={{
@@ -170,7 +205,7 @@ export default function CaketichEasterEgg({ onClose }: { onClose: () => void }) 
         nom nom nom...
       </div>
 
-      {/* Timer — pixel font */}
+      {/* Timer */}
       <div
         className="absolute bottom-8"
         style={{
@@ -179,22 +214,23 @@ export default function CaketichEasterEgg({ onClose }: { onClose: () => void }) 
           color: "#6E6878",
         }}
       >
-        {elapsed}s / 60s
+        {Math.min(elapsed, 20)}s / 20s
       </div>
 
-      {/* Tap to exit hint — pixel font */}
-      <div
-        className="absolute top-8"
-        style={{
-          fontFamily: "'Press Start 2P', monospace",
-          fontSize: "7px",
-          color: "#6E6878",
-        }}
-      >
-        tap to exit
-      </div>
+      {/* Wait hint before drop */}
+      {!dropped && (
+        <div
+          className="absolute top-8"
+          style={{
+            fontFamily: "'Press Start 2P', monospace",
+            fontSize: "7px",
+            color: "#6E6878",
+          }}
+        >
+          wait...
+        </div>
+      )}
 
-      {/* CSS animations */}
       <style>{`
         @keyframes caketichDrop {
           0% { transform: translateY(-200px); opacity: 0; }
