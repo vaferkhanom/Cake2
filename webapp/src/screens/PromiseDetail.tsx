@@ -107,7 +107,7 @@ export default function PromiseDetail() {
         >
           <BackIcon size={20} />
         </Link>
-        <h1 className="text-xl font-extrabold text-ink dark:text-ink-dark">جزئیات قول</h1>
+        <h1 className="text-xl font-extrabold flex-1 text-center text-lavender dark:text-lavender-dark tracking-tight">جزئیات قول</h1>
       </header>
 
       {/* Hero card */}

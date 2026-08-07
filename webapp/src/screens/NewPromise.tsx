@@ -72,7 +72,7 @@ export default function NewPromise() {
         >
           <BackIcon size={20} />
         </button>
-        <h1 className="text-xl font-extrabold">قول جدید</h1>
+        <h1 className="text-xl font-extrabold flex-1 text-center text-lavender dark:text-lavender-dark tracking-tight">قول جدید</h1>
       </header>
 
       {/* Progress bar */}

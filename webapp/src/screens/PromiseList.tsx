@@ -48,7 +48,7 @@ export default function PromiseList() {
         >
           <BackIcon size={20} />
         </Link>
-        <h1 className="text-xl font-extrabold text-ink dark:text-ink-dark">قول‌های من</h1>
+        <h1 className="text-xl font-extrabold flex-1 text-center text-lavender dark:text-lavender-dark tracking-tight">قول‌های من</h1>
       </header>
 
       {/* Tabs */}

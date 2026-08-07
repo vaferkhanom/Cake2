@@ -37,7 +37,7 @@ export default function Dashboard() {
         className="flex items-center justify-between"
       >
         <div>
-          <h1 className="text-2xl font-extrabold text-ink dark:text-ink-dark">قولیار</h1>
+          <h1 className="text-[1.65rem] font-extrabold text-lavender dark:text-lavender-dark tracking-tight">قولیار</h1>
           <p className="text-sm text-ink-soft dark:text-ink-darkSoft">
             سلام {me?.user.display_name || "دوست"}! امروز چی قول می‌دی؟
           </p>

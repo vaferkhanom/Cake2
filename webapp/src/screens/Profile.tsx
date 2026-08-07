@@ -51,7 +51,7 @@ export default function Profile() {
         >
           <BackIcon size={20} />
         </Link>
-        <h1 className="text-xl font-extrabold flex-1 text-center">پروفایل</h1>
+        <h1 className="text-xl font-extrabold flex-1 text-center text-lavender dark:text-lavender-dark tracking-tight">پروفایل</h1>
         <button
           onClick={() => { haptic("light"); toggleTheme(); }}
           className="flex h-10 w-10 items-center justify-center rounded-2xl bg-card text-ink dark:bg-card-dark dark:text-ink-dark shadow-card dark:shadow-cardDark"

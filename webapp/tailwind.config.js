@@ -37,6 +37,10 @@ export default {
           darkSoft: "#A8A0B8", // dark mode soft text
           darkFaint: "#6E6878", // dark mode faint text
         },
+        lavender: {
+          DEFAULT: "#8B7BA8", // header text (light mode)
+          dark: "#C4B8D9",   // header text (dark mode)
+        },
       },
       borderRadius: {
         card: "24px",
