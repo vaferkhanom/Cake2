@@ -7,7 +7,8 @@ html {
 }
 
 body {
-  @apply bg-bg text-ink font-vazir antialiased;
+  @apply text-ink font-vazir antialiased;
+  background-color: transparent;
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior: none;
 }
@@ -35,15 +36,6 @@ body {
   100% {
     transform: translateX(100%);
   }
-}
-
-/* Dark mode support via .dark class on <html> */
-.dark body {
-  @apply bg-bg-dark text-ink-dark;
-}
-
-.dark .skeleton {
-  @apply bg-bg-dark;
 }
 
 @media (prefers-reduced-motion: reduce) {

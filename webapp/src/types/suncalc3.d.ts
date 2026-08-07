@@ -25,7 +25,8 @@ declare module "suncalc3" {
 
   interface MoonIllumination {
     fraction: number; // 0 to 1
-    phase: number; // 0 to 1 (0=new, 0.5=full)
+    phase: { from: number; to: number; id: string; emoji: string; name: string; weight: number; css: string; }; // phase info object
+    phaseValue: number; // 0 to 1 (0=new, 0.5=full) — use this for sprite selection
     angle: number;
   }
 

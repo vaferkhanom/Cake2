@@ -3,9 +3,12 @@
  *
  * Triggered by tapping the score 10 times on Profile.
  * After 60 seconds, "caketich" text drops and scatters the scene.
+ * 
+ * PIXEL-ART: uses Press Start 2P font, large pixel sprites,
+ * and real per-pixel scatter effect.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 // Pixel art color palette
 const C = {
@@ -28,7 +31,6 @@ const C = {
 };
 
 // Stitch pixel art — 16x20 grid
-// Sitting at table, eating cake, messy mouth
 const STITCH_BODY = [
   // Row 0-2: ears
   [C._, C._, C.D, C.B, C.B, C._, C._, C._, C._, C._, C._, C.D, C.B, C.B, C._, C._],
@@ -50,23 +52,35 @@ const STITCH_BODY = [
   [C._, C._, C._, C._, C.D, C.B, C.B, C.B, C.B, C.D, C._, C.H, C.H, C.D, C._, C._],
   // Row 13: table
   [C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N],
-  // Row 14-15: cake on table
+  // Row 14-16: cake on table
   [C._, C._, C._, C._, C._, C.CR, C.CR, C.CR, C.CR, C.CR, C._, C._, C._, C._, C._, C._],
   [C._, C._, C._, C._, C.CK, C.CK, C.CK, C.CK, C.CK, C.CK, C._, C._, C._, C._, C._, C._],
   [C._, C._, C._, C._, C.CK, C.CB, C.CK, C.CK, C.CB, C.CK, C._, C._, C._, C._, C._, C._],
-  // Row 18-19: table legs
+  // Row 17-19: table bottom + legs
   [C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N, C.N],
+  [C.T, C._, C._, C._, C._, C._, C.T, C._, C._, C.T, C._, C._, C._, C._, C._, C.T],
   [C.T, C._, C._, C._, C._, C._, C.T, C._, C._, C.T, C._, C._, C._, C._, C._, C.T],
 ];
 
-const PIXEL = 6; // px per pixel
-const GRID_W = STITCH_BODY[0].length;
+const PIXEL = 16; // px per pixel (increased from 6)
 
 export default function CaketichEasterEgg({ onClose }: { onClose: () => void }) {
   const [elapsed, setElapsed] = useState(0);
   const [dropped, setDropped] = useState(false);
   const [scatter, setScatter] = useState(false);
   const startRef = useRef(Date.now());
+
+  // Generate stable random offsets for each pixel (for scatter effect)
+  const scatterOffsets = useMemo(() => {
+    return STITCH_BODY.map((row) =>
+      row.map(() => ({
+        tx: (Math.random() - 0.5) * 200,
+        ty: (Math.random() - 0.5) * 200,
+        rot: (Math.random() - 0.5) * 30,
+        delay: Math.random() * 200,
+      }))
+    );
+  }, []);
 
   // 60-second timer
   useEffect(() => {
@@ -87,7 +101,7 @@ export default function CaketichEasterEgg({ onClose }: { onClose: () => void }) 
       style={{ background: "linear-gradient(180deg, #1a1040 0%, #2a1a50 50%, #3a2060 100%)" }}
       onClick={onClose}
     >
-      {/* Caketich text drop */}
+      {/* Caketich text drop — pixel-art font */}
       {dropped && (
         <div
           className="absolute top-0 left-0 right-0 text-center"
@@ -97,11 +111,11 @@ export default function CaketichEasterEgg({ onClose }: { onClose: () => void }) 
           }}
         >
           <span
-            className="text-5xl font-extrabold"
+            className="text-4xl font-pixel"
             style={{
               color: "#FF6B6B",
-              textShadow: "0 4px 20px rgba(255,107,107,0.6)",
-              fontFamily: "monospace",
+              textShadow: "3px 3px 0 #CC3333, 6px 6px 0 rgba(0,0,0,0.3)",
+              letterSpacing: "2px",
             }}
           >
             caketich
@@ -109,63 +123,75 @@ export default function CaketichEasterEgg({ onClose }: { onClose: () => void }) 
         </div>
       )}
 
-      {/* Pixel art scene */}
-      <div
-        style={{
-          transform: scatter
-            ? "scale(0.8) rotate(5deg) translateY(40px)"
-            : dropped
-            ? "translateY(20px)"
-            : "none",
-          transition: "transform 0.6s ease-out",
-        }}
-      >
-        {/* Stitch pixel art */}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-          {STITCH_BODY.map((row, y) => (
-            <div key={y} style={{ display: "flex" }}>
-              {row.map((color, x) => (
+      {/* Pixel art scene — per-pixel scatter */}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+        {STITCH_BODY.map((row, y) => (
+          <div key={y} style={{ display: "flex" }}>
+            {row.map((color, x) => {
+              const offset = scatterOffsets[y][x];
+              const isTransparent = color === C._;
+
+              let transform = "none";
+              let transition = "none";
+
+              if (scatter && !isTransparent) {
+                transform = `translate(${offset.tx}px, ${offset.ty}px) rotate(${offset.rot}deg)`;
+                transition = `transform 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94) ${offset.delay}ms`;
+              }
+
+              return (
                 <div
                   key={x}
                   style={{
                     width: PIXEL,
                     height: PIXEL,
                     backgroundColor: color,
-                    animationDelay: `${(y * GRID_W + x) * 2}ms`,
+                    transform,
+                    transition,
+                    opacity: scatter && isTransparent ? 0 : 1,
                   }}
                 />
-              ))}
-            </div>
-          ))}
-        </div>
-
-        {/* Eating animation indicator */}
-        <div
-          className="mt-4 text-center text-sm"
-          style={{
-            color: "#C4B8D9",
-            fontFamily: "monospace",
-            animation: "pulse 2s ease-in-out infinite",
-          }}
-        >
-          🍰 nom nom nom...
-        </div>
+              );
+            })}
+          </div>
+        ))}
       </div>
 
-      {/* Timer */}
+      {/* Eating animation indicator — pixel font */}
       <div
-        className="absolute bottom-8 text-xs"
-        style={{ color: "#6E6878", fontFamily: "monospace" }}
+        className="mt-6 text-center"
+        style={{
+          fontFamily: "'Press Start 2P', monospace",
+          fontSize: "10px",
+          color: "#C4B8D9",
+          animation: "pulse 2s ease-in-out infinite",
+        }}
+      >
+        nom nom nom...
+      </div>
+
+      {/* Timer — pixel font */}
+      <div
+        className="absolute bottom-8"
+        style={{
+          fontFamily: "'Press Start 2P', monospace",
+          fontSize: "8px",
+          color: "#6E6878",
+        }}
       >
         {elapsed}s / 60s
       </div>
 
-      {/* Tap to exit hint */}
+      {/* Tap to exit hint — pixel font */}
       <div
-        className="absolute top-8 text-xs"
-        style={{ color: "#6E6878", fontFamily: "monospace" }}
+        className="absolute top-8"
+        style={{
+          fontFamily: "'Press Start 2P', monospace",
+          fontSize: "7px",
+          color: "#6E6878",
+        }}
       >
-        tap anywhere to exit
+        tap to exit
       </div>
 
       {/* CSS animations */}
