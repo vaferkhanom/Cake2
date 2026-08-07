@@ -7,6 +7,7 @@ import PromiseDetail from "./screens/PromiseDetail";
 import NewPromise from "./screens/NewPromise";
 import Profile from "./screens/Profile";
 import { ThemeProvider } from "./lib/useTheme.tsx";
+import LiveSkyBackground from "./components/LiveSkyBackground";
 
 export default function App() {
   const location = useLocation();
@@ -18,6 +19,7 @@ export default function App() {
 
   return (
     <ThemeProvider>
+      <LiveSkyBackground />
       <div className="mx-auto min-h-screen max-w-md px-4 pb-28 pt-6">
         <AnimatePresence mode="wait">
           <Routes location={location} key={location.pathname}>
