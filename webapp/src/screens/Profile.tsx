@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { api, type MeOut } from "../lib/api";
@@ -6,11 +6,27 @@ import { haptic, backButton } from "../lib/telegram";
 import CountUp from "../components/CountUp";
 import { BackIcon, FlameIcon, HeartIcon, SparkleIcon } from "../components/icons";
 import { gentleSpring, durations } from "../motion/presets";
+import CaketichEasterEgg from "../components/CaketichEasterEgg";
+
 export default function Profile() {
   const [me, setMe] = useState<MeOut | null>(null);
   const [error, setError] = useState("");
+  const [showEasterEgg, setShowEasterEgg] = useState(false);
+  const tapCountRef = useRef(0);
+  const tapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => backButton(() => history.back()), []);
+
+  const handleScoreTap = () => {
+    haptic("light");
+    tapCountRef.current += 1;
+    if (tapTimerRef.current) clearTimeout(tapTimerRef.current);
+    tapTimerRef.current = setTimeout(() => { tapCountRef.current = 0; }, 3000);
+    if (tapCountRef.current >= 10) {
+      tapCountRef.current = 0;
+      setShowEasterEgg(true);
+    }
+  };
   useEffect(() => {
     api.me().then(setMe).catch((e) => setError(e.message));
   }, []);
@@ -87,7 +103,10 @@ export default function Profile() {
         transition={{ duration: durations.fast / 1000, ease: "easeOut", delay: 0.08 }}
         className="grid grid-cols-2 gap-3"
       >
-        <div className="rounded-card bg-card p-5 text-center shadow-card dark:bg-card-dark dark:shadow-cardDark">
+        <div
+          className="rounded-card bg-card p-5 text-center shadow-card dark:bg-card-dark dark:shadow-cardDark cursor-pointer select-none active:scale-95 transition-transform"
+          onClick={handleScoreTap}
+        >
           <p className="text-xs text-ink-soft dark:text-ink-darkSoft">امتیاز اعتبار</p>
           <p className="mt-1 text-3xl font-extrabold text-accent-deep">
             <CountUp value={me.user.score} />
@@ -145,6 +164,11 @@ export default function Profile() {
         <HeartIcon size={14} />
         ساخته‌شده با عشق برای قولیار
       </motion.section>
+
+      {/* Caketich Easter Egg */}
+      {showEasterEgg && (
+        <CaketichEasterEgg onClose={() => setShowEasterEgg(false)} />
+      )}
     </div>
   );
 }
