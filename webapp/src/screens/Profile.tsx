@@ -4,14 +4,11 @@ import { motion } from "framer-motion";
 import { api, type MeOut } from "../lib/api";
 import { haptic, backButton } from "../lib/telegram";
 import CountUp from "../components/CountUp";
-import { BackIcon, FlameIcon, HeartIcon, SparkleIcon, SunIcon, MoonIcon } from "../components/icons";
+import { BackIcon, FlameIcon, HeartIcon, SparkleIcon } from "../components/icons";
 import { gentleSpring, durations } from "../motion/presets";
-import { useTheme } from "../lib/useTheme.tsx";
-
 export default function Profile() {
   const [me, setMe] = useState<MeOut | null>(null);
   const [error, setError] = useState("");
-  const { resolvedTheme, toggleTheme } = useTheme();
 
   useEffect(() => backButton(() => history.back()), []);
   useEffect(() => {
@@ -52,13 +49,7 @@ export default function Profile() {
           <BackIcon size={20} />
         </Link>
         <h1 className="text-xl font-extrabold flex-1 text-center text-lavender dark:text-lavender-dark tracking-tight">پروفایل</h1>
-        <button
-          onClick={() => { haptic("light"); toggleTheme(); }}
-          className="flex h-10 w-10 items-center justify-center rounded-2xl bg-card text-ink dark:bg-card-dark dark:text-ink-dark shadow-card dark:shadow-cardDark"
-          aria-label={resolvedTheme === "dark" ? "حالت روشن" : "حالت تاریک"}
-        >
-          {resolvedTheme === "dark" ? <SunIcon size={22} /> : <MoonIcon size={22} />}
-        </button>
+        <div className="w-10" />
       </header>
 
       {/* User card */}

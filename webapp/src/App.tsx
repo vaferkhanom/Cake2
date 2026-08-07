@@ -6,7 +6,6 @@ import PromiseList from "./screens/PromiseList";
 import PromiseDetail from "./screens/PromiseDetail";
 import NewPromise from "./screens/NewPromise";
 import Profile from "./screens/Profile";
-import { ThemeProvider } from "./lib/useTheme.tsx";
 import LiveSkyBackground from "./components/LiveSkyBackground";
 
 export default function App() {
@@ -18,7 +17,7 @@ export default function App() {
   }, [location.pathname]);
 
   return (
-    <ThemeProvider>
+    <>
       <LiveSkyBackground />
       <div className="mx-auto min-h-screen max-w-md px-4 pb-28 pt-6">
         <AnimatePresence mode="wait">
@@ -31,6 +30,6 @@ export default function App() {
           </Routes>
         </AnimatePresence>
       </div>
-    </ThemeProvider>
+    </>
   );
 }
