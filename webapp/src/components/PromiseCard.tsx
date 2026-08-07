@@ -55,9 +55,21 @@ export default function PromiseCard({
             {promise.jalali_deadline ? ` · مهلت: ${promise.jalali_deadline}` : ""}
           </p>
           {promise.target_type === "friend" && (
-            <p className="mt-1 text-[11px] text-ink-faint dark:text-ink-darkFaint">
-              {promise.is_giver ? `به ${promise.receiver_name}` : `از ${promise.giver_name}`}
-            </p>
+            <div className="mt-1 flex items-center gap-1.5 text-[11px] text-ink-faint dark:text-ink-darkFaint">
+              {(() => {
+                const photoUrl = promise.is_giver ? promise.receiver_photo_url : promise.giver_photo_url;
+                const name = promise.is_giver ? promise.receiver_name : promise.giver_name;
+                const label = promise.is_giver ? "به" : "از";
+                return (
+                  <>
+                    {photoUrl ? (
+                      <img src={photoUrl} alt={name} className="h-4 w-4 rounded-full object-cover" />
+                    ) : null}
+                    <span>{label} {name}</span>
+                  </>
+                );
+              })()}
+            </div>
           )}
         </div>
       </div>

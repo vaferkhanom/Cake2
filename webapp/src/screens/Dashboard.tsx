@@ -45,9 +45,13 @@ export default function Dashboard() {
         <Link
           to="/profile"
           onClick={() => haptic("light")}
-          className="flex h-11 w-11 items-center justify-center rounded-2xl bg-card text-accent dark:bg-card-dark dark:text-accent shadow-card dark:shadow-cardDark"
+          className="flex h-11 w-11 items-center justify-center rounded-2xl bg-card text-accent dark:bg-card-dark dark:text-accent shadow-card dark:shadow-cardDark overflow-hidden"
         >
-          <UserIcon size={22} />
+          {me?.user.photo_url ? (
+            <img src={me.user.photo_url} alt="" className="h-full w-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+          ) : (
+            <UserIcon size={22} />
+          )}
         </Link>
       </motion.header>
 

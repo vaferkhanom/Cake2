@@ -69,8 +69,16 @@ export default function Profile() {
         className="rounded-card bg-gradient-to-br from-accent-soft to-card p-6 shadow-card dark:from-accent-deep/30 dark:to-card-dark dark:shadow-cardDark"
       >
         <div className="flex items-center gap-4">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-accent text-2xl font-extrabold text-white">
-            {me.user.display_name.slice(0, 1).toUpperCase()}
+          <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-accent text-2xl font-extrabold text-white overflow-hidden">
+            {me.user.photo_url ? (
+              <img
+                src={me.user.photo_url}
+                alt={me.user.display_name}
+                className="h-full w-full object-cover"
+                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+              />
+            ) : null}
+            {(!me.user.photo_url) && me.user.display_name.slice(0, 1).toUpperCase()}
           </div>
           <div className="flex-1">
             <p className="text-lg font-extrabold text-ink dark:text-ink-dark">{me.user.display_name}</p>

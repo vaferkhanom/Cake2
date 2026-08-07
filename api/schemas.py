@@ -28,7 +28,9 @@ class PromiseOut(BaseModel):
     jalali_deadline: Optional[str] = None
 
     giver_name: str = ""
+    giver_photo_url: Optional[str] = None
     receiver_name: str = ""
+    receiver_photo_url: Optional[str] = None
     is_giver: bool = False
     is_receiver: bool = False
 
@@ -37,6 +39,7 @@ class UserOut(BaseModel):
     telegram_id: int
     username: Optional[str] = None
     full_name: str
+    photo_url: Optional[str] = None
     score: int = 0
     current_streak: int = 0
     display_name: str = ""

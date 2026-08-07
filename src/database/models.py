@@ -42,6 +42,7 @@ class User(Base):
     telegram_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
     username: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     full_name: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    photo_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True, default=None)
     has_started_bot: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

@@ -40,6 +40,7 @@ export interface UserOut {
   telegram_id: number;
   username: string | null;
   full_name: string;
+  photo_url: string | null;
   score: number;
   current_streak: number;
   display_name: string;
@@ -74,7 +75,9 @@ export interface PromiseOut {
   jalali_created_at: string;
   jalali_deadline: string | null;
   giver_name: string;
+  giver_photo_url: string | null;
   receiver_name: string;
+  receiver_photo_url: string | null;
   is_giver: boolean;
   is_receiver: boolean;
 }

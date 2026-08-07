@@ -96,7 +96,9 @@ def serialize_promise(p: Promise, viewer_id: int) -> PromiseOut:
         jalali_created_at=format_jalali_date(p.created_at),
         jalali_deadline=format_jalali_short(p.deadline) if p.deadline else None,
         giver_name=_name_for(p.giver) if p.giver else "",
+        giver_photo_url=getattr(p.giver, 'photo_url', None) if p.giver else None,
         receiver_name=_name_for(p.receiver) if p.receiver else "",
+        receiver_photo_url=getattr(p.receiver, 'photo_url', None) if p.receiver else None,
         is_giver=p.giver_id == viewer_id,
         is_receiver=p.receiver_id == viewer_id,
     )
@@ -112,6 +114,7 @@ async def me(user: TelegramUser = Depends(get_telegram_user)):
             telegram_id=user.id,
             username=user.username or None,
             full_name=(user.first_name + (" " + user.last_name if user.last_name else "")).strip(),
+            photo_url=user.photo_url or None,
         )
         uid = user.id
 
@@ -142,6 +145,7 @@ async def me(user: TelegramUser = Depends(get_telegram_user)):
             telegram_id=db_user.telegram_id,
             username=db_user.username,
             full_name=db_user.full_name,
+            photo_url=db_user.photo_url,
             score=db_user.score,
             current_streak=db_user.current_streak,
             display_name=db_user.display_name,

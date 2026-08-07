@@ -69,7 +69,7 @@ async def get_session():
             raise
 
 
-async def get_or_create_user(session: AsyncSession, telegram_id: int, username: str | None, full_name: str) -> User:
+async def get_or_create_user(session: AsyncSession, telegram_id: int, username: str | None, full_name: str, photo_url: str | None = None) -> User:
     """Get or create user, upgrading stub users to real ones. Session commit handled by caller."""
     cleaned_username = username.lstrip("@") if username else None
 
@@ -95,6 +95,7 @@ async def get_or_create_user(session: AsyncSession, telegram_id: int, username: 
                 telegram_id=telegram_id,
                 username=cleaned_username,
                 full_name=full_name,
+                photo_url=photo_url,
                 has_started_bot=True,
             )
             session.add(user)
@@ -107,6 +108,7 @@ async def get_or_create_user(session: AsyncSession, telegram_id: int, username: 
             telegram_id=telegram_id,
             username=cleaned_username,
             full_name=full_name,
+            photo_url=photo_url,
             has_started_bot=True,
         )
         session.add(user)
@@ -117,6 +119,8 @@ async def get_or_create_user(session: AsyncSession, telegram_id: int, username: 
         if cleaned_username:
             user.username = cleaned_username
         user.full_name = full_name
+        if photo_url:
+            user.photo_url = photo_url
 
     await session.flush()
     await session.refresh(user)
