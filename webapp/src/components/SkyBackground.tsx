@@ -1,11 +1,10 @@
 /**
  * SkyBackground — Simple CSS-based sky with puffy clouds (day) and stars (night).
  * No canvas, no heavy animation loop — lightweight and performant.
- * Uses SunCalc3 for Tehran day/night detection.
+ * Uses SunCalc (via dynamic import) for Tehran day/night detection.
  */
 
 import { useEffect, useMemo, useState } from "react";
-import * as SunCalc from "suncalc";
 
 const TEHRAN_LAT = 35.6892;
 const TEHRAN_LON = 51.3890;
@@ -14,12 +13,11 @@ const TEHRAN_LON = 51.3890;
 function generateClouds(count: number) {
   return Array.from({ length: count }, (_, i) => ({
     id: i,
-    top: 5 + Math.random() * 45, // 5% to 50% from top (sky area only)
-    left: Math.random() * 100, // random horizontal
-    scale: 0.6 + Math.random() * 0.8, // 0.6x to 1.4x size
-    opacity: 0.5 + Math.random() * 0.4, // 0.5 to 0.9
-    drift: 8 + Math.random() * 15, // drift distance in px
-    duration: 40 + Math.random() * 60, // animation duration in seconds
+    top: 5 + Math.random() * 45,
+    left: Math.random() * 100,
+    scale: 0.6 + Math.random() * 0.8,
+    opacity: 0.5 + Math.random() * 0.4,
+    duration: 40 + Math.random() * 60,
   }));
 }
 
@@ -27,10 +25,10 @@ function generateClouds(count: number) {
 function generateStars(count: number) {
   return Array.from({ length: count }, (_, i) => ({
     id: i,
-    top: Math.random() * 55, // stars in sky area (0% to 55%)
+    top: Math.random() * 55,
     left: Math.random() * 100,
-    size: 1 + Math.random() * 3, // 1px to 4px
-    twinkleDuration: 1.5 + Math.random() * 3, // 1.5s to 4.5s
+    size: 1 + Math.random() * 3,
+    twinkleDuration: 1.5 + Math.random() * 3,
     twinkleDelay: Math.random() * 4,
     opacity: 0.4 + Math.random() * 0.6,
   }));
@@ -39,15 +37,23 @@ function generateStars(count: number) {
 export default function SkyBackground() {
   const [sunAlt, setSunAlt] = useState(0);
 
-  // Recompute sun position every 5 minutes
   useEffect(() => {
-    const compute = () => {
-      const sp = SunCalc.getPosition(new Date(), TEHRAN_LAT, TEHRAN_LON);
-      setSunAlt((sp.altitude * 180) / Math.PI);
+    let cancelled = false;
+    const compute = async () => {
+      try {
+        const SunCalc = await import("suncalc");
+        if (cancelled) return;
+        const sp = SunCalc.getPosition(new Date(), TEHRAN_LAT, TEHRAN_LON);
+        setSunAlt((sp.altitude * 180) / Math.PI);
+      } catch (err) {
+        console.error("[SkyBackground] suncalc import failed:", err);
+        // Default to daytime if suncalc fails
+        if (!cancelled) setSunAlt(30);
+      }
     };
     compute();
     const iv = setInterval(compute, 5 * 60_000);
-    return () => clearInterval(iv);
+    return () => { cancelled = true; clearInterval(iv); };
   }, []);
 
   const isNight = sunAlt < -6;
@@ -57,7 +63,6 @@ export default function SkyBackground() {
   const clouds = useMemo(() => generateClouds(8), []);
   const stars = useMemo(() => generateStars(50), []);
 
-  // Sky gradient colors based on time of day
   const skyStyle = useMemo(() => {
     if (isNight) {
       return {
@@ -74,7 +79,6 @@ export default function SkyBackground() {
           rgb(${Math.round(255 - t * 80)}, ${Math.round(180 + t * 30)}, ${Math.round(140 + t * 60)}) 100%)`,
       };
     }
-    // Day
     return {
       background: "linear-gradient(180deg, #4A9BD9 0%, #7EC8E3 35%, #B5E3F0 65%, #D4EFFA 100%)",
     };
@@ -85,7 +89,6 @@ export default function SkyBackground() {
       className="fixed inset-0 -z-10 overflow-hidden transition-colors duration-[3000ms]"
       style={skyStyle}
     >
-      {/* Clouds — visible during day and dusk */}
       {!isNight && clouds.map((c) => (
         <div
           key={c.id}
@@ -104,7 +107,6 @@ export default function SkyBackground() {
         </div>
       ))}
 
-      {/* Stars — visible at night, fade in at dusk */}
       {stars.map((s) => (
         <div
           key={s.id}
@@ -126,7 +128,6 @@ export default function SkyBackground() {
         />
       ))}
 
-      {/* Subtle warm glow at horizon during dusk */}
       {isDusk && (
         <div
           className="absolute bottom-0 left-0 right-0"
@@ -140,53 +141,24 @@ export default function SkyBackground() {
   );
 }
 
-// Puffy cloud shape using CSS
 function Cloud() {
   return (
     <div className="relative" style={{ width: "120px", height: "50px" }}>
-      {/* Main body */}
       <div
         className="absolute rounded-full"
-        style={{
-          width: "80px",
-          height: "40px",
-          backgroundColor: "rgba(255, 255, 255, 0.9)",
-          bottom: 0,
-          left: "20px",
-        }}
+        style={{ width: "80px", height: "40px", backgroundColor: "rgba(255, 255, 255, 0.9)", bottom: 0, left: "20px" }}
       />
-      {/* Top bump left */}
       <div
         className="absolute rounded-full"
-        style={{
-          width: "50px",
-          height: "40px",
-          backgroundColor: "rgba(255, 255, 255, 0.9)",
-          bottom: "20px",
-          left: "15px",
-        }}
+        style={{ width: "50px", height: "40px", backgroundColor: "rgba(255, 255, 255, 0.9)", bottom: "20px", left: "15px" }}
       />
-      {/* Top bump right */}
       <div
         className="absolute rounded-full"
-        style={{
-          width: "60px",
-          height: "35px",
-          backgroundColor: "rgba(255, 255, 255, 0.9)",
-          bottom: "18px",
-          left: "45px",
-        }}
+        style={{ width: "60px", height: "35px", backgroundColor: "rgba(255, 255, 255, 0.9)", bottom: "18px", left: "45px" }}
       />
-      {/* Small top bump */}
       <div
         className="absolute rounded-full"
-        style={{
-          width: "35px",
-          height: "25px",
-          backgroundColor: "rgba(255, 255, 255, 0.85)",
-          bottom: "30px",
-          left: "35px",
-        }}
+        style={{ width: "35px", height: "25px", backgroundColor: "rgba(255, 255, 255, 0.85)", bottom: "30px", left: "35px" }}
       />
     </div>
   );
