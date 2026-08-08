@@ -48,6 +48,16 @@ body {
   50% { opacity: 0.15; }
 }
 
+@keyframes cloudDrift {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(15px); }
+}
+
+@keyframes starTwinkle {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 0.15; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
