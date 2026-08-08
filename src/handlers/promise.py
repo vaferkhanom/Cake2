@@ -38,12 +38,19 @@ from src.keyboards.inline import (
     DeadlineCallback,
     PromiseListCallback,
     PromiseItemCallback,
+    BackCallback,
     confirm_keyboard,
+    confirm_keyboard_with_back,
     claim_done_keyboard,
     receiver_confirm_done_keyboard,
     receiver_confirm_keyboard,
     target_keyboard,
+    target_keyboard_with_back,
     deadline_choice_keyboard,
+    deadline_choice_keyboard_with_back,
+    deadline_value_keyboard_with_back,
+    friend_id_keyboard_with_back,
+    back_keyboard,
     get_my_promises_menu_keyboard,
     get_promise_list_keyboard,
     get_promise_list_header,
@@ -222,6 +229,117 @@ async def main_back(callback: CallbackQuery, state: FSMContext) -> None:
     )
 
 
+# ── Back navigation in FSM flows ──────────────────────────
+
+# State → (keyboard text, keyboard builder)
+_BACK_MAP_PRIVATE = {
+    PromiseStates.waiting_for_content: (
+        "بگو ببینم، چه قولی می‌خوای بدی؟ ✍️",
+        lambda: back_keyboard("__cancel__"),
+    ),
+    PromiseStates.waiting_for_confirmation: (
+        None,  # will be built from data
+        None,
+    ),
+    PromiseStates.waiting_for_deadline_choice: (
+        "مهلت زمانی داره？",
+        lambda: deadline_choice_keyboard_with_back(),
+    ),
+    PromiseStates.waiting_for_deadline_value: (
+        "تاریخ رو به فرمت جلالی بنویس (مثال: ۱۴۰۵/۰۶/۱۵ یا 1405/06/15):",
+        lambda: deadline_value_keyboard_with_back(),
+    ),
+    PromiseStates.waiting_for_target: (
+        "این قول برای کیه؟",
+        lambda: target_keyboard_with_back(),
+    ),
+    PromiseStates.waiting_for_friend_id: (
+        "آیدیش رو بفرست 🔗\n"
+        "بهترین راه دادن یوزرنیم یا آیدی عددیه؛ فوروارد هم کار می‌کنه ولی "
+        "اگه طرف تنظیمات حریم خصوصیش محدود باشه، ممکنه نتونم بفهمم کیه.",
+        lambda: friend_id_keyboard_with_back(),
+    ),
+}
+
+_BACK_MAP_GROUP = {
+    GroupPromiseStates.waiting_for_content: (
+        None,
+        None,
+    ),
+    GroupPromiseStates.waiting_for_confirmation: (
+        None,
+        None,
+    ),
+    GroupPromiseStates.waiting_for_deadline_choice: (
+        "مهلت زمانی داره؟",
+        lambda: deadline_choice_keyboard_with_back(),
+    ),
+    GroupPromiseStates.waiting_for_deadline_value: (
+        "تاریخ رو به فرمت جلالی بنویس (مثال: ۱۴۰۵/۰۶/۱۵ یا 1405/06/15):",
+        lambda: deadline_value_keyboard_with_back(),
+    ),
+}
+
+
+async def _go_back(callback: CallbackQuery, state: FSMContext, target_state_name: str) -> None:
+    """Handle back navigation in FSM flows."""
+    await callback.answer()
+    data = await state.get_data()
+    current_state_str = await state.get_state()
+
+    # Cancel: clear state and go to main menu
+    if target_state_name == "__cancel__":
+        await state.clear()
+        await callback.message.edit_text(
+            "سلام! من قول‌یارم 🤝 حواسم به قول‌هایی هست که به خودت یا دوستات می‌دی، تا هیچ‌کدوم فراموش نشن.\n\nچیکار کنیم؟",
+        )
+        return
+
+    # Determine if private or group flow
+    is_group = current_state_str and current_state_str.startswith("GroupPromiseStates")
+    back_map = _BACK_MAP_GROUP if is_group else _BACK_MAP_PRIVATE
+
+    # Find the target state object
+    target_state = None
+    for state_cls in [PromiseStates, GroupPromiseStates]:
+        if hasattr(state_cls, target_state_name):
+            target_state = getattr(state_cls, target_state_name)
+            break
+
+    if not target_state:
+        await state.clear()
+        await callback.message.edit_text("خطای ناوبری. از /start دوباره شروع کن.")
+        return
+
+    await state.set_state(target_state)
+
+    # Special: back to confirmation → rebuild the confirmation message from data
+    if target_state_name == "waiting_for_confirmation":
+        content = data.get("content", "")
+        await callback.message.edit_text(
+            f"قولت: <blockquote>{escape_html(content)}</blockquote>\n\nثبت کنم؟",
+            reply_markup=confirm_keyboard_with_back(),
+        )
+        return
+
+    # Generic: look up text and keyboard from map
+    entry = back_map.get(target_state)
+    if entry and entry[0] is not None:
+        text, kb_fn = entry
+        kb = kb_fn() if kb_fn else None
+        await callback.message.edit_text(text, reply_markup=kb)
+    else:
+        # Fallback: just clear
+        await state.clear()
+        await callback.message.edit_text("خطای ناوبری. از /start دوباره شروع کن.")
+
+
+@router.callback_query(BackCallback.filter())
+async def handle_back(callback: CallbackQuery, callback_data: BackCallback, state: FSMContext) -> None:
+    """Route back button presses."""
+    await _go_back(callback, state, callback_data.target_state)
+
+
 # ── Command Handlers ─────────────────────────────────────
 
 @router.message(Command("new"))
@@ -313,7 +431,7 @@ async def promise_content_received(message: Message, state: FSMContext) -> None:
 
     await message.answer(
         f"قولت: <blockquote>{escape_html(content)}</blockquote>\n\nثبت کنم؟",
-        reply_markup=confirm_keyboard(),
+        reply_markup=confirm_keyboard_with_back(),
     )
 
 
@@ -326,7 +444,7 @@ async def promise_confirmed(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(PromiseStates.waiting_for_deadline_choice)
     await callback.message.edit_text(
         "مهلت زمانی داره؟",
-        reply_markup=deadline_choice_keyboard(),
+        reply_markup=deadline_choice_keyboard_with_back(),
     )
 
 
@@ -365,7 +483,7 @@ async def deadline_quick_choice(callback: CallbackQuery, callback_data: Deadline
     await state.set_state(PromiseStates.waiting_for_target)
     await callback.message.edit_text(
         "این قول برای کیه؟",
-        reply_markup=target_keyboard(),
+        reply_markup=target_keyboard_with_back(),
     )
 
 
@@ -376,7 +494,7 @@ async def deadline_custom(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(PromiseStates.waiting_for_deadline_value)
     await callback.message.edit_text(
         "تاریخ رو به فرمت جلالی بنویس (مثال: ۱۴۰۵/۰۶/۱۵ یا 1405/06/15):",
-        reply_markup=back_to_main_keyboard(),
+        reply_markup=deadline_value_keyboard_with_back(),
     )
 
 
@@ -404,7 +522,7 @@ async def deadline_custom_value(message: Message, state: FSMContext) -> None:
         await state.set_state(PromiseStates.waiting_for_target)
         await message.answer(
             "این قول برای کیه؟",
-            reply_markup=target_keyboard(),
+            reply_markup=target_keyboard_with_back(),
         )
     except Exception:
         await message.answer("فرمت تاریخ درست نیست. مثال: ۱۴۰۵/۰۶/۱۵ یا 1405/06/15")
@@ -453,7 +571,7 @@ async def target_friend(callback: CallbackQuery, state: FSMContext) -> None:
         "آیدیش رو بفرست 🔗\n"
         "بهترین راه دادن یوزرنیم یا آیدی عددیه؛ فوروارد هم کار می‌کنه ولی "
         "اگه طرف تنظیمات حریم خصوصیش محدود باشه، ممکنه نتونم بفهمم کیه.",
-        reply_markup=back_to_main_keyboard(),
+        reply_markup=friend_id_keyboard_with_back(),
     )
 
 
@@ -1024,7 +1142,7 @@ async def group_promise_content_received(message: Message, state: FSMContext) ->
 
     await message.answer(
         f"قول برای {target_display_name}: <blockquote>{escape_html(content)}</blockquote>\n\nثبت کنم؟",
-        reply_markup=confirm_keyboard(),
+        reply_markup=confirm_keyboard_with_back(),
     )
 
 
@@ -1036,7 +1154,7 @@ async def group_promise_confirmed(callback: CallbackQuery, state: FSMContext) ->
     await state.set_state(GroupPromiseStates.waiting_for_deadline_choice)
     await callback.message.edit_text(
         "مهلت زمانی داره؟",
-        reply_markup=deadline_choice_keyboard(),
+        reply_markup=deadline_choice_keyboard_with_back(),
     )
 
 
