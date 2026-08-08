@@ -137,7 +137,7 @@ export default function PromiseIntroScreen({ onDone }: { onDone: () => void }) {
           alignItems: "center",
         }}
         initial={{ x: "-80vw" }}
-        animate={{ x: "15vw" }}
+        animate={{ x: "-5vw" }}
         transition={{ duration: 7, ease: [0.25, 0.1, 0.25, 1] }}
       >
         {/* Horizontal beam — responsive width via canvas scaling */}
