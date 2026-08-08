@@ -2,15 +2,13 @@
  * PromiseIntroScreen — Pixel-art wooden plank intro screen.
  *
  * Shows once per session before the Dashboard. A horizontal wooden beam
- * slides in from the left (~3.5s), then a wooden plank drops from it
- * via chains (~3.5s). Total: 7 seconds. Both are pixel-art styled.
- * After landing, the plank becomes tappable to enter the app.
+ * slides in from the left with a plank hanging from it via chains.
+ * Total: ~7 seconds. After landing, the plank becomes tappable.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 
-// Persian quotes about promises
 const QUOTES = [
   "قول بده، قلب ببر! 💕",
   "زیر قولت نزن، عزیزم! 😤",
@@ -52,15 +50,15 @@ export function markIntroShown(): void {
 
 // Pixel-art wood color palette
 const W = {
-  D1: "#5C3317", // dark outline
-  D2: "#7A4B2A", // dark grain
-  M1: "#A0522D", // mid wood
-  M2: "#B8733A", // lighter mid
-  L1: "#C49A6C", // light highlight
-  L2: "#D4AA7C", // lightest
+  D1: "#5C3317",
+  D2: "#7A4B2A",
+  M1: "#A0522D",
+  M2: "#B8733A",
+  L1: "#C49A6C",
+  L2: "#D4AA7C",
 };
 
-// Pixel-art horizontal beam sprite (a simple wood beam, ~80x8 px scaled up)
+// Beam sprite (~40x8 pixels)
 const BEAM_SPRITE: string[][] = [
   [W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1],
   [W.D1,W.M1,W.M2,W.M1,W.L1,W.M1,W.M2,W.M1,W.L1,W.M1,W.M2,W.M1,W.L1,W.M1,W.M2,W.M1,W.L1,W.M1,W.M2,W.M1,W.L1,W.M1,W.M2,W.M1,W.L1,W.M1,W.M2,W.M1,W.L1,W.M1,W.M2,W.M1,W.L1,W.M1,W.M2,W.M1,W.L1,W.M1,W.D1,W.D1],
@@ -72,23 +70,18 @@ const BEAM_SPRITE: string[][] = [
   [W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1],
 ];
 
-// Pixel-art plank sprite (smaller, ~40x12 px scaled up)
+// Plank sprite (~32x10 pixels)
 const PLANK_SPRITE: string[][] = [
-  // top border
-  [W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1],
-  // wood rows
-  [W.D1,W.M1,W.M2,W.L1,W.M1,W.L2,W.M1,W.M2,W.L1,W.M1,W.L2,W.M1,W.M2,W.L1,W.M1,W.L2,W.M1,W.M2,W.L1,W.M1,W.L2,W.M1,W.M2,W.L1,W.M1,W.L2,W.M1,W.M2,W.L1,W.M1,W.L2,W.M1,W.M2,W.L1,W.M1,W.L2,W.M1,W.M2,W.D1,W.D1],
-  [W.D1,W.M2,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M2,W.D1,W.D1],
-  [W.D1,W.M1,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.M1,W.M1,W.D1,W.D1],
-  [W.D1,W.M2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M2,W.M2,W.D1,W.D1],
-  [W.D1,W.M1,W.L1,W.M1,W.L2,W.M1,W.L1,W.M2,W.L1,W.M1,W.L2,W.M1,W.L1,W.M2,W.L1,W.M1,W.L2,W.M1,W.L1,W.M2,W.L1,W.M1,W.L2,W.M1,W.L1,W.M2,W.L1,W.M1,W.L2,W.M1,W.L1,W.M2,W.L1,W.M1,W.L2,W.M1,W.M1,W.M1,W.D1,W.D1],
-  [W.D1,W.M2,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M2,W.D1,W.D1],
-  [W.D1,W.M1,W.M2,W.L1,W.M1,W.L2,W.M1,W.M2,W.L1,W.M1,W.L2,W.M1,W.M2,W.L1,W.M1,W.L2,W.M1,W.M2,W.L1,W.M1,W.L2,W.M1,W.M2,W.L1,W.M1,W.L2,W.M1,W.M2,W.L1,W.M1,W.L2,W.M1,W.M2,W.L1,W.M1,W.L2,W.M1,W.M2,W.D1,W.D1],
-  [W.D1,W.M2,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M2,W.D1,W.D1],
-  [W.D1,W.M1,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.M1,W.M1,W.D1,W.D1],
-  [W.D1,W.M2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M2,W.M2,W.D1,W.D1],
-  // bottom border
-  [W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1],
+  [W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1],
+  [W.D1,W.M1,W.M2,W.L1,W.M1,W.L2,W.M1,W.M2,W.L1,W.M1,W.L2,W.M1,W.M2,W.L1,W.M1,W.L2,W.M1,W.M2,W.L1,W.M1,W.L2,W.M1,W.M2,W.L1,W.M1,W.L2,W.M1,W.M2,W.L1,W.M1,W.D1,W.D1],
+  [W.D1,W.M2,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M2,W.D1,W.D1],
+  [W.D1,W.M1,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M2,W.L1,W.M1,W.D1,W.D1],
+  [W.D1,W.M2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.M2,W.D1,W.D1],
+  [W.D1,W.M1,W.L1,W.M1,W.L2,W.M1,W.L1,W.M2,W.L1,W.M1,W.L2,W.M1,W.L1,W.M2,W.L1,W.M1,W.L2,W.M1,W.L1,W.M2,W.L1,W.M1,W.L2,W.M1,W.L1,W.M2,W.L1,W.M1,W.L2,W.M1,W.D1,W.D1],
+  [W.D1,W.M2,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M2,W.D1,W.D1],
+  [W.D1,W.M1,W.M2,W.L1,W.M1,W.L2,W.M1,W.M2,W.L1,W.M1,W.L2,W.M1,W.M2,W.L1,W.M1,W.L2,W.M1,W.M2,W.L1,W.M1,W.L2,W.M1,W.M2,W.L1,W.M1,W.L2,W.M1,W.M2,W.L1,W.M1,W.D1,W.D1],
+  [W.D1,W.M2,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M1,W.D2,W.M2,W.D1,W.D1],
+  [W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1,W.D1],
 ];
 
 function drawPixelGrid(
@@ -112,16 +105,12 @@ function drawPixelGrid(
 }
 
 export default function PromiseIntroScreen({ onDone }: { onDone: () => void }) {
-  const [phase, setPhase] = useState<"beam" | "plank" | "done">("beam");
   const [canTap, setCanTap] = useState(false);
-
   const quote = useMemo(() => QUOTES[Math.floor(Math.random() * QUOTES.length)], []);
 
-  // Phase timing: beam slides in (3.5s) → plank drops (3.5s) → done
   useEffect(() => {
-    const t1 = setTimeout(() => setPhase("plank"), 3500);
-    const t2 = setTimeout(() => { setPhase("done"); setCanTap(true); }, 7000);
-    return () => { clearTimeout(t1); clearTimeout(t2); };
+    const t = setTimeout(() => setCanTap(true), 7000);
+    return () => clearTimeout(t);
   }, []);
 
   const handleTap = useCallback(() => {
@@ -136,128 +125,156 @@ export default function PromiseIntroScreen({ onDone }: { onDone: () => void }) {
       onClick={handleTap}
       style={{ pointerEvents: canTap ? "auto" : "none" }}
     >
-      {/* Beam slides in from left — positioned in upper 30% */}
+      {/* Beam + plank assembly — one connected unit sliding in from left */}
       <motion.div
         className="absolute"
-        style={{ top: "25%", left: 0, pointerEvents: "none" }}
-        initial={{ x: "-100vw" }}
-        animate={{ x: "10vw" }}
-        transition={{ duration: 3.5, ease: [0.25, 0.1, 0.25, 1] }}
+        style={{
+          top: "22%",
+          left: 0,
+          pointerEvents: "none",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+        }}
+        initial={{ x: "-80vw" }}
+        animate={{ x: "15vw" }}
+        transition={{ duration: 7, ease: [0.25, 0.1, 0.25, 1] }}
       >
-        <canvas
-          ref={(c) => {
-            if (!c) return;
-            const ctx = c.getContext("2d");
-            if (!ctx) return;
-            const ps = 4; // pixel size for beam
-            c.width = BEAM_SPRITE[0].length * ps;
-            c.height = BEAM_SPRITE.length * ps;
-            c.style.width = (BEAM_SPRITE[0].length * ps) + "px";
-            c.style.height = (BEAM_SPRITE.length * ps) + "px";
-            drawPixelGrid(ctx, BEAM_SPRITE, 0, 0, ps);
-          }}
-          style={{ imageRendering: "pixelated" }}
-        />
-      </motion.div>
+        {/* Horizontal beam — responsive width via canvas scaling */}
+        <BeamCanvas />
 
-      {/* Plank drops from the beam — centered below the beam */}
-      {phase !== "beam" && (
-        <motion.div
-          className="absolute flex flex-col items-center"
+        {/* Chains + plank — hangs directly below the beam, always attached */}
+        <div
           style={{
-            top: "calc(25% + 32px)", // just below the beam
-            left: "50%",
-            transform: "translateX(-50%)",
-            pointerEvents: "none",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
           }}
-          initial={{ y: "-40vh", opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ duration: 3.5, ease: [0.34, 1.56, 0.64, 1] }}
         >
           {/* Chains */}
-          <div className="flex justify-between" style={{ width: "100px" }}>
-            <div className="flex flex-col items-center">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <div
-                  key={`l-${i}`}
-                  style={{
-                    width: i % 2 === 0 ? "6px" : "5px",
-                    height: "8px",
-                    border: "2px solid #7A4B2A",
-                    borderRadius: i % 2 === 0 ? "3px" : "1px",
-                    marginTop: i === 0 ? 0 : "-1px",
-                    background: "transparent",
-                  }}
-                />
-              ))}
-            </div>
-            <div className="flex flex-col items-center">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <div
-                  key={`r-${i}`}
-                  style={{
-                    width: i % 2 === 0 ? "6px" : "5px",
-                    height: "8px",
-                    border: "2px solid #7A4B2A",
-                    borderRadius: i % 2 === 0 ? "3px" : "1px",
-                    marginTop: i === 0 ? 0 : "-1px",
-                    background: "transparent",
-                  }}
-                />
-              ))}
-            </div>
+          <div className="flex justify-between" style={{ width: "120px" }}>
+            <ChainStrand />
+            <ChainStrand />
           </div>
 
-          {/* Pixel-art plank */}
-          <div className="flex flex-col items-center justify-center" style={{ position: "relative" }}>
-            <canvas
-              ref={(c) => {
-                if (!c) return;
-                const ctx = c.getContext("2d");
-                if (!ctx) return;
-                const ps = 4;
-                c.width = PLANK_SPRITE[0].length * ps;
-                c.height = PLANK_SPRITE.length * ps;
-                c.style.width = (PLANK_SPRITE[0].length * ps) + "px";
-                c.style.height = (PLANK_SPRITE.length * ps) + "px";
-                drawPixelGrid(ctx, PLANK_SPRITE, 0, 0, ps);
-              }}
-              style={{ imageRendering: "pixelated" }}
-            />
-            {/* Quote text overlaid on plank */}
-            <p
-              className="absolute text-center font-bold"
-              style={{
-                top: "50%",
-                left: "50%",
-                transform: "translate(-50%, -50%)",
-                color: "#FFF8E7",
-                textShadow: "1px 1px 2px rgba(0,0,0,0.5)",
-                fontSize: "13px",
-                whiteSpace: "nowrap",
-                pointerEvents: "none",
-              }}
-            >
-              {quote}
-            </p>
-          </div>
+          {/* Plank */}
+          <PlankWithQuote quote={quote} canTap={canTap} />
+        </div>
+      </motion.div>
+    </div>
+  );
+}
 
-          {/* Tap hint */}
-          {canTap && (
-            <p
-              className="mt-6 text-center"
-              style={{
-                fontFamily: "'Press Start 2P', monospace",
-                fontSize: "6px",
-                color: "rgba(255,248,231,0.6)",
-                pointerEvents: "none",
-              }}
-            >
-              tap to enter
-            </p>
-          )}
-        </motion.div>
+// Responsive beam canvas — 65vw wide
+function BeamCanvas() {
+  return (
+    <canvas
+      ref={(c) => {
+        if (!c) return;
+        const ctx = c.getContext("2d");
+        if (!ctx) return;
+        const spriteW = BEAM_SPRITE[0].length;
+        const spriteH = BEAM_SPRITE.length;
+        // Scale to 65vw while keeping pixel-art look
+        const targetW = Math.round(window.innerWidth * 0.65);
+        const ps = targetW / spriteW;
+        c.width = targetW;
+        c.height = spriteH * ps;
+        c.style.width = targetW + "px";
+        c.style.height = Math.round(spriteH * ps) + "px";
+        drawPixelGrid(ctx, BEAM_SPRITE, 0, 0, ps);
+      }}
+      style={{ imageRendering: "pixelated" as const }}
+    />
+  );
+}
+
+// Plank canvas + quote text — ~50vw wide
+function PlankWithQuote({ quote, canTap }: { quote: string; canTap: boolean }) {
+  return (
+    <div style={{ position: "relative" }}>
+      <canvas
+        ref={(c) => {
+          if (!c) return;
+          const ctx = c.getContext("2d");
+          if (!ctx) return;
+          const spriteW = PLANK_SPRITE[0].length;
+          const spriteH = PLANK_SPRITE.length;
+          const targetW = Math.round(window.innerWidth * 0.50);
+          const ps = targetW / spriteW;
+          c.width = targetW;
+          c.height = spriteH * ps;
+          c.style.width = targetW + "px";
+          c.style.height = Math.round(spriteH * ps) + "px";
+          drawPixelGrid(ctx, PLANK_SPRITE, 0, 0, ps);
+        }}
+        style={{ imageRendering: "pixelated" as const }}
+      />
+
+      {/* Quote text constrained to plank width */}
+      <div
+        className="absolute flex items-center justify-center"
+        style={{
+          top: "10%",
+          left: "10%",
+          right: "10%",
+          bottom: "10%",
+        }}
+      >
+        <p
+          className="text-center font-bold"
+          style={{
+            color: "#FFF8E7",
+            textShadow: "2px 2px 4px rgba(0,0,0,0.8), 0 0 8px rgba(0,0,0,0.4)",
+            fontSize: "15px",
+            lineHeight: "1.3",
+            pointerEvents: "none",
+            width: "100%",
+          }}
+        >
+          {quote}
+        </p>
+      </div>
+
+      {/* Tap hint */}
+      {canTap && (
+        <p
+          className="absolute text-center"
+          style={{
+            bottom: "-30px",
+            left: "50%",
+            transform: "translateX(-50%)",
+            fontFamily: "'Press Start 2P', monospace",
+            fontSize: "8px",
+            color: "rgba(255,248,231,0.6)",
+            whiteSpace: "nowrap",
+            pointerEvents: "none",
+          }}
+        >
+          tap to enter
+        </p>
       )}
+    </div>
+  );
+}
+
+// Reusable chain strand
+function ChainStrand() {
+  return (
+    <div className="flex flex-col items-center">
+      {Array.from({ length: 6 }).map((_, i) => (
+        <div
+          key={i}
+          style={{
+            width: i % 2 === 0 ? "6px" : "5px",
+            height: "8px",
+            border: "2px solid #7A4B2A",
+            borderRadius: i % 2 === 0 ? "3px" : "1px",
+            marginTop: i === 0 ? 0 : "-1px",
+            background: "transparent",
+          }}
+        />
+      ))}
     </div>
   );
 }

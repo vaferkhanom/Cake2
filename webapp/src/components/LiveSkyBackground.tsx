@@ -268,7 +268,7 @@ export default function LiveSkyBackground() {
     function drawIsland(w: number, waterY: number, waterH: number) {
       const ix = w * 0.78; // right side
       const iy = waterY + waterH * 0.12;
-      const ps = 2; // pixel size for island characters
+      const ps = 3; // pixel size for island characters
 
       // Sandy island base (organic shape, sits in water)
       const islandPixels: [number, number, string][] = [];
@@ -378,7 +378,7 @@ export default function LiveSkyBackground() {
       const bx = boat.x * w;
       const bob = Math.sin(time / 1200 + boat.bobPhase) * 3;
       const by = waterY + waterH * 0.2 + bob;
-      const ps = 2;
+      const ps = 3;
 
       // Boat hull (wooden rowboat)
       ctx!.fillStyle = "#8B6914";
@@ -596,6 +596,10 @@ export default function LiveSkyBackground() {
       }
 
       // ── Bikini Bottom island (right side) ──
+      // DIAGNOSTIC: log coordinates once per second
+      if (Math.floor(time / 1000) !== Math.floor((time - 16) / 1000)) {
+        console.log(`[SKY] w=${w} h=${h} waterY=${waterY.toFixed(1)} waterH=${waterH.toFixed(1)} islandY=${(waterY + waterH * 0.12).toFixed(1)} boatY=${(waterY + waterH * 0.2).toFixed(1)}`);
+      }
       drawIsland(w, waterY, waterH);
 
       // ── Tyrion's boat (left side) ──
