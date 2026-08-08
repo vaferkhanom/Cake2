@@ -45,6 +45,10 @@ class ResolveDisputeCallback(CallbackData, prefix="rdp"):
     promise_id: int
 
 
+class BackCallback(CallbackData, prefix="back"):
+    target_state: str  # state to go back to
+
+
 class DeadlineCallback(CallbackData, prefix="dl"):
     action: str  # "tomorrow" | "week" | "month" | "none" | "custom"
 
@@ -59,6 +63,66 @@ class PromiseItemCallback(CallbackData, prefix="pitem"):
     promise_id: int
     list_type: str  # "self" | "given" | "received"
     page: int
+
+
+# ── Back button helper ──────────────────────────────────────
+
+
+def back_button(target_state: str, text: str = "🔙 برگشت") -> InlineKeyboardButton:
+    """Create a back button for FSM navigation."""
+    return InlineKeyboardButton(
+        text=text,
+        callback_data=BackCallback(target_state=target_state).pack(),
+    )
+
+
+def back_keyboard(target_state: str, text: str = "🔙 برگشت") -> InlineKeyboardMarkup:
+    """Single back button keyboard."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text=text, callback_data=BackCallback(target_state=target_state).pack())
+    return builder.as_markup()
+
+
+def confirm_keyboard_with_back():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ بزن بریم", callback_data=ConfirmPromiseCallback(action="yes").pack())
+    builder.button(text="✏️ عوضش کنم", callback_data=ConfirmPromiseCallback(action="edit").pack())
+    builder.adjust(2)
+    builder.row(back_button("waiting_for_content"))
+    return builder.as_markup()
+
+
+def deadline_choice_keyboard_with_back():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🌅 فردا", callback_data=DeadlineCallback(action="tomorrow").pack())
+    builder.button(text="📅 این هفته", callback_data=DeadlineCallback(action="week").pack())
+    builder.button(text="🗓 این ماه", callback_data=DeadlineCallback(action="month").pack())
+    builder.button(text="⏭ بدون مهلت", callback_data=DeadlineCallback(action="none").pack())
+    builder.button(text="✏️ تاریخ دلخواه", callback_data=DeadlineCallback(action="custom").pack())
+    builder.adjust(2, 2, 1)
+    builder.row(back_button("waiting_for_confirmation"))
+    return builder.as_markup()
+
+
+def target_keyboard_with_back():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🙋‍♂️ خودم", callback_data=TargetCallback(target="self").pack())
+    builder.button(text="🤍 یکی از دوستام", callback_data=TargetCallback(target="friend").pack())
+    builder.adjust(2)
+    builder.row(back_button("waiting_for_deadline_choice"))
+    return builder.as_markup()
+
+
+def friend_id_keyboard_with_back():
+    builder = InlineKeyboardBuilder()
+    builder.row(back_button("waiting_for_target", "🔙 برگشت به انتخاب هدف"))
+    return builder.as_markup()
+
+
+def deadline_value_keyboard_with_back():
+    builder = InlineKeyboardBuilder()
+    builder.row(back_button("waiting_for_deadline_choice", "🔙 برگشت به انتخاب مهلت"))
+    return builder.as_markup()
 
 
 # ── Helper Functions ───────────────────────────────────────

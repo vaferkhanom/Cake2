@@ -4,7 +4,6 @@ Revision ID: c4d8f1e2a3b5
 Revises: b3d9e2f1a8c7
 Create Date: 2026-08-05
 """
-
 from alembic import op
 import sqlalchemy as sa
 
@@ -13,16 +12,19 @@ import sqlalchemy as sa
 revision = "c4d8f1e2a3b5"
 down_revision = "b3d9e2f1a8c7"
 branch_labels = None
-depends_on = None
+depends_on = "9d8e7f6a5b4c"
 
 
 def upgrade() -> None:
-    # Step 1: Drop existing unique constraint on promise_id (if it exists)
-    with op.batch_alter_table("promises", schema=None) as batch_op:
-        try:
-            batch_op.drop_constraint("uq_promises_promise_id", type_="unique")
-        except Exception:
-            pass  # Constraint may not exist in all DB states
+    bind = op.get_bind()
+    # Step 1: Drop existing unique constraint on promise_id
+    # On Postgres, the constraint name might be auto-generated (not exactly "uq_promises_promise_id").
+    # Use raw SQL to drop IF EXISTS.
+    if bind.dialect.name != "sqlite":
+        op.execute("ALTER TABLE promises DROP CONSTRAINT IF EXISTS uq_promises_promise_id")
+    else:
+        # SQLite: handled by recreate in tests/dev
+        pass
 
     # Step 2: Backfill promise_id per-giver (starting from 1 for each giver)
     # Use raw SQL for this since it involves window functions
@@ -41,16 +43,15 @@ def upgrade() -> None:
     )
 
     # Step 3: Add composite unique constraint
-    with op.batch_alter_table("promises", schema=None) as batch_op:
-        batch_op.create_unique_constraint(
-            "uq_giver_promise_id", ["giver_id", "promise_id"]
-        )
+    if bind.dialect.name != "sqlite":
+        op.execute("ALTER TABLE promises ADD CONSTRAINT uq_giver_promise_id UNIQUE (giver_id, promise_id)")
 
 
 def downgrade() -> None:
+    bind = op.get_bind()
     # Drop composite unique constraint
-    with op.batch_alter_table("promises", schema=None) as batch_op:
-        batch_op.drop_constraint("uq_giver_promise_id", type_="unique")
+    if bind.dialect.name != "sqlite":
+        op.execute("ALTER TABLE promises DROP CONSTRAINT IF EXISTS uq_giver_promise_id")
 
     # Restore global sequential numbering
     conn = op.get_bind()
@@ -66,7 +67,5 @@ def downgrade() -> None:
     )
 
     # Re-add original unique constraint
-    with op.batch_alter_table("promises", schema=None) as batch_op:
-        batch_op.create_unique_constraint(
-            "uq_promises_promise_id", ["promise_id"]
-        )
+    if bind.dialect.name != "sqlite":
+        op.execute("ALTER TABLE promises ADD CONSTRAINT uq_promises_promise_id UNIQUE (promise_id)")

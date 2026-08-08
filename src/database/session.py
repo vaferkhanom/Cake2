@@ -1,21 +1,57 @@
-"""Database session management for Promise Bot."""
+"""Database session management for Promise Bot.
+
+Supports both SQLite (local dev / current bot) and PostgreSQL (Railway).
+When DATABASE_URL is set, it wins over DB_PATH. The engine is created lazily
+on first use so that tests importing this module don't need a live DB.
+"""
 
 from contextlib import asynccontextmanager
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from datetime import datetime
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from src.config import settings
 from src.database.models import Base, User, Promise, PromiseStatus, TargetType
 
+_engine: AsyncEngine | None = None
+_async_session_maker: async_sessionmaker | None = None
 
-DATABASE_URL = f"sqlite+aiosqlite:///{settings.DB_PATH}"
 
-engine = create_async_engine(DATABASE_URL, echo=False)
-AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+def _make_engine() -> AsyncEngine:
+    global _engine, _async_session_maker
+    if _engine is not None:
+        return _engine
+
+    if settings.DATABASE_URL:
+        # Postgres — assume asyncpg driver; normalize "postgres://" -> "postgresql+asyncpg://"
+        url = settings.DATABASE_URL
+        if url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif url.startswith("postgresql://"):
+            url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        _engine = create_async_engine(url, echo=False, pool_pre_ping=True)
+    else:
+        _engine = create_async_engine(
+            f"sqlite+aiosqlite:///{settings.DB_PATH}",
+            echo=False,
+        )
+    _async_session_maker = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
+    return _engine
+
+
+def get_engine() -> AsyncEngine:
+    return _make_engine()
+
+
+def get_session_maker() -> async_sessionmaker:
+    _make_engine()
+    assert _async_session_maker is not None
+    return _async_session_maker
 
 
 async def init_db():
+    engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -23,7 +59,8 @@ async def init_db():
 @asynccontextmanager
 async def get_session():
     """Get a database session with automatic commit/rollback."""
-    async with AsyncSessionLocal() as session:
+    maker = get_session_maker()
+    async with maker() as session:
         try:
             yield session
             await session.commit()
@@ -32,7 +69,7 @@ async def get_session():
             raise
 
 
-async def get_or_create_user(session: AsyncSession, telegram_id: int, username: str | None, full_name: str) -> User:
+async def get_or_create_user(session: AsyncSession, telegram_id: int, username: str | None, full_name: str, photo_url: str | None = None) -> User:
     """Get or create user, upgrading stub users to real ones. Session commit handled by caller."""
     cleaned_username = username.lstrip("@") if username else None
 
@@ -58,6 +95,7 @@ async def get_or_create_user(session: AsyncSession, telegram_id: int, username: 
                 telegram_id=telegram_id,
                 username=cleaned_username,
                 full_name=full_name,
+                photo_url=photo_url,
                 has_started_bot=True,
             )
             session.add(user)
@@ -70,6 +108,7 @@ async def get_or_create_user(session: AsyncSession, telegram_id: int, username: 
             telegram_id=telegram_id,
             username=cleaned_username,
             full_name=full_name,
+            photo_url=photo_url,
             has_started_bot=True,
         )
         session.add(user)
@@ -80,6 +119,8 @@ async def get_or_create_user(session: AsyncSession, telegram_id: int, username: 
         if cleaned_username:
             user.username = cleaned_username
         user.full_name = full_name
+        if photo_url:
+            user.photo_url = photo_url
 
     await session.flush()
     await session.refresh(user)
@@ -122,7 +163,7 @@ async def create_promise(
     target_type: TargetType,
     receiver_id: int | None,
     status: PromiseStatus,
-    deadline: str | None = None,  # Also accepts datetime objects
+    deadline: datetime | None = None,  # Also accepts datetime objects (backward-compatible)
 ) -> Promise:
     """Create a new promise with per-giver promise_id and retry on race condition. Session commit handled by caller."""
     from sqlalchemy import func
