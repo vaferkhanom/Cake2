@@ -19,7 +19,7 @@ export default function App() {
 
   return (
     <>
-      <LiveSkyBackground reducedActivity={showIntro} />
+      <LiveSkyBackground />
       {showIntro && <PromiseIntroScreen onDone={() => setShowIntro(false)} />}
       {!showIntro && (
         <div className="mx-auto min-h-screen max-w-md px-4 pb-28 pt-6">
