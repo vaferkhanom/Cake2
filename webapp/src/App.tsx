@@ -6,8 +6,7 @@ import PromiseList from "./screens/PromiseList";
 import PromiseDetail from "./screens/PromiseDetail";
 import NewPromise from "./screens/NewPromise";
 import Profile from "./screens/Profile";
-import SkyBackground from "./components/SkyBackground";
-import { ErrorBoundary } from "./components/ErrorBoundary";
+import LiveSkyBackground from "./components/LiveSkyBackground";
 import PromiseIntroScreen, { shouldShowIntro } from "./components/PromiseIntroScreen";
 
 export default function App() {
@@ -20,9 +19,7 @@ export default function App() {
 
   return (
     <>
-      <ErrorBoundary>
-        <SkyBackground />
-      </ErrorBoundary>
+      <LiveSkyBackground />
       {showIntro && <PromiseIntroScreen onDone={() => setShowIntro(false)} />}
       {!showIntro && (
         <div className="mx-auto min-h-screen max-w-md px-4 pb-28 pt-6">
