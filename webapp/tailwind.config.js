@@ -44,7 +44,7 @@ export default {
         float: "0 4px 12px rgba(242,107,154,0.25)",
       },
       fontFamily: {
-        vazir: ["Vazirmatn", "Tahoma", "sans-serif"],
+        vazir: ["'Noto Naskh Arabic'", "Tahoma", "sans-serif"],
         pixel: ["'Press Start 2P'", "monospace"],
       },
     },

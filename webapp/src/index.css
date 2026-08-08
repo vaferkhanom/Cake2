@@ -8,7 +8,7 @@ html {
 
 body {
   @apply text-ink font-vazir antialiased;
-  background-color: transparent;
+  background-color: #FBF7F4;
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior: none;
 }
@@ -36,6 +36,16 @@ body {
   100% {
     transform: translateX(100%);
   }
+}
+
+@keyframes cloudDrift {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(15px); }
+}
+
+@keyframes starTwinkle {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 0.15; }
 }
 
 @media (prefers-reduced-motion: reduce) {
