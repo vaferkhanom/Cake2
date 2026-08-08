@@ -5,7 +5,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import SunCalc from "suncalc3";
+import * as SunCalc from "suncalc";
 
 const TEHRAN_LAT = 35.6892;
 const TEHRAN_LON = 51.3890;
