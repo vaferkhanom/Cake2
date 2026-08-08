@@ -265,10 +265,19 @@ export default function LiveSkyBackground() {
     }
 
     // ── Draw Bikini Bottom island + characters ────────────────────────────
-    function drawIsland(w: number, waterY: number, waterH: number) {
+    function drawIsland(w: number, waterY: number, waterH: number, nightFactor: number) {
       const ix = w * 0.78; // right side
       const iy = waterY + waterH * 0.12;
       const ps = 3; // pixel size for island characters
+
+      // Night glow: warm ambient light around island
+      if (nightFactor > 0.1) {
+        ctx!.save();
+        ctx!.globalAlpha = nightFactor * 0.35;
+        ctx!.fillStyle = `rgba(255, 200, 100, 0.5)`;
+        ctx!.fillRect(ix - ps * 18, iy - ps * 18, ps * 36, ps * 24);
+        ctx!.restore();
+      }
 
       // Sandy island base (organic shape, sits in water)
       const islandPixels: [number, number, string][] = [];
@@ -373,12 +382,24 @@ export default function LiveSkyBackground() {
     }
 
     // ── Draw Tyrion's boat + rare event ───────────────────────────────────
-    function drawBoat(w: number, waterY: number, waterH: number, time: number) {
+    function drawBoat(w: number, waterY: number, waterH: number, time: number, nightFactor: number) {
       const boat = boatRef.current;
       const bx = boat.x * w;
       const bob = Math.sin(time / 1200 + boat.bobPhase) * 3;
       const by = waterY + waterH * 0.2 + bob;
       const ps = 3;
+
+      // Night lantern glow on boat
+      if (nightFactor > 0.1) {
+        ctx!.save();
+        ctx!.globalAlpha = nightFactor * 0.4;
+        ctx!.fillStyle = `rgba(255, 180, 60, 0.6)`;
+        ctx!.fillRect(bx + ps * 1, by - ps * 3, ps * 3, ps * 2);
+        // Wider glow radius
+        ctx!.globalAlpha = nightFactor * 0.15;
+        ctx!.fillRect(bx - ps * 4, by - ps * 8, ps * 18, ps * 14);
+        ctx!.restore();
+      }
 
       // Boat hull (wooden rowboat)
       ctx!.fillStyle = "#8B6914";
@@ -595,15 +616,14 @@ export default function LiveSkyBackground() {
         FISH_DRAWERS[f.shape](ctx!, fx, fy, f.size, f.color);
       }
 
+      // ── Night factor for island/boat visibility ──
+      const nightFactor = Math.max(0, Math.min(1, (-currentSunAlt) / 18));
+
       // ── Bikini Bottom island (right side) ──
-      // DIAGNOSTIC: log coordinates once per second
-      if (Math.floor(time / 1000) !== Math.floor((time - 16) / 1000)) {
-        console.log(`[SKY] w=${w} h=${h} waterY=${waterY.toFixed(1)} waterH=${waterH.toFixed(1)} islandY=${(waterY + waterH * 0.12).toFixed(1)} boatY=${(waterY + waterH * 0.2).toFixed(1)}`);
-      }
-      drawIsland(w, waterY, waterH);
+      drawIsland(w, waterY, waterH, nightFactor);
 
       // ── Tyrion's boat (left side) ──
-      drawBoat(w, waterY, waterH, time);
+      drawBoat(w, waterY, waterH, time, nightFactor);
 
       animFrameRef.current = requestAnimationFrame(draw);
     }
