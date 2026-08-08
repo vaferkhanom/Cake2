@@ -192,7 +192,7 @@ interface BoatState {
 }
 
 // ── Component ───────────────────────────────────────────────────────────────
-export default function LiveSkyBackground() {
+export default function LiveSkyBackground({ reducedActivity = false }: { reducedActivity?: boolean } = {}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [now, setNow] = useState(() => new Date());
   const starsRef = useRef<Star[]>(generateStars(100));
@@ -208,6 +208,9 @@ export default function LiveSkyBackground() {
   const animFrameRef = useRef<number>(0);
   const waterPixelsRef = useRef<WaterPixel[]>([]);
   const lastAstronomyRef = useRef(0);
+  const reducedActivityRef = useRef(reducedActivity);
+
+  useEffect(() => { reducedActivityRef.current = reducedActivity; }, [reducedActivity]);
 
   useEffect(() => {
     const iv = setInterval(() => setNow(new Date()), 60_000);
@@ -265,10 +268,19 @@ export default function LiveSkyBackground() {
     }
 
     // ── Draw Bikini Bottom island + characters ────────────────────────────
-    function drawIsland(w: number, waterY: number, waterH: number) {
+    function drawIsland(w: number, waterY: number, waterH: number, nightFactor: number) {
       const ix = w * 0.78; // right side
       const iy = waterY + waterH * 0.12;
       const ps = 3; // pixel size for island characters
+
+      // Night glow: warm ambient light around island
+      if (nightFactor > 0.1) {
+        ctx!.save();
+        ctx!.globalAlpha = nightFactor * 0.35;
+        ctx!.fillStyle = `rgba(255, 200, 100, 0.5)`;
+        ctx!.fillRect(ix - ps * 18, iy - ps * 18, ps * 36, ps * 24);
+        ctx!.restore();
+      }
 
       // Sandy island base (organic shape, sits in water)
       const islandPixels: [number, number, string][] = [];
@@ -373,12 +385,24 @@ export default function LiveSkyBackground() {
     }
 
     // ── Draw Tyrion's boat + rare event ───────────────────────────────────
-    function drawBoat(w: number, waterY: number, waterH: number, time: number) {
+    function drawBoat(w: number, waterY: number, waterH: number, time: number, nightFactor: number, reduced: boolean) {
       const boat = boatRef.current;
       const bx = boat.x * w;
       const bob = Math.sin(time / 1200 + boat.bobPhase) * 3;
       const by = waterY + waterH * 0.2 + bob;
       const ps = 3;
+
+      // Night lantern glow on boat
+      if (nightFactor > 0.1) {
+        ctx!.save();
+        ctx!.globalAlpha = nightFactor * 0.4;
+        ctx!.fillStyle = `rgba(255, 180, 60, 0.6)`;
+        ctx!.fillRect(bx + ps * 1, by - ps * 3, ps * 3, ps * 2);
+        // Wider glow radius
+        ctx!.globalAlpha = nightFactor * 0.15;
+        ctx!.fillRect(bx - ps * 4, by - ps * 8, ps * 18, ps * 14);
+        ctx!.restore();
+      }
 
       // Boat hull (wooden rowboat)
       ctx!.fillStyle = "#8B6914";
@@ -429,19 +453,23 @@ export default function LiveSkyBackground() {
       ctx!.fillStyle = "#CC0000";
       ctx!.fillRect(tx + ps * 3.3, ty + ps * 1, ps * 1.2, ps * 0.8);
 
-      // Slow drift
-      boat.x += 0.00008;
-      if (boat.x > 0.25) boat.x = 0.05;
+      // Slow drift (frozen during reduced activity)
+      if (!reduced) {
+        boat.x += 0.00008;
+        if (boat.x > 0.25) boat.x = 0.05;
+      }
 
       // ── Rare surfacing event ─────────────────────────────────────────
-      const t = Date.now();
-      if (!boat.surfacing && t > boat.nextSurfacing) {
-        boat.surfacing = true;
-        boat.surfacingProgress = 0;
-        boat.surfacingX = boat.x + (Math.random() - 0.5) * 0.08;
-        boat.nextSurfacing = t + 45000 + Math.random() * 120000;
+      if (!reduced) {
+        const t = Date.now();
+        if (!boat.surfacing && t > boat.nextSurfacing) {
+          boat.surfacing = true;
+          boat.surfacingProgress = 0;
+          boat.surfacingX = boat.x + (Math.random() - 0.5) * 0.08;
+          boat.nextSurfacing = t + 45000 + Math.random() * 120000;
+        }
       }
-      if (boat.surfacing) {
+      if (boat.surfacing && !reduced) {
         boat.surfacingProgress += 0.008;
         if (boat.surfacingProgress >= 1) {
           boat.surfacing = false;
@@ -490,9 +518,10 @@ export default function LiveSkyBackground() {
       }
 
       // ── Stars ──
+      const reduced = reducedActivityRef.current;
       if (currentStarOpacity > 0) {
         for (const star of starsRef.current) {
-          const tw = Math.sin(time / 1000 * star.twinkleSpeed + star.twinklePhase);
+          const tw = reduced ? 0.5 : Math.sin(time / 1000 * star.twinkleSpeed + star.twinklePhase);
           const raw = (tw + 1) / 2;
           const stepped = raw < 0.33 ? 0.2 : raw < 0.66 ? 0.5 : 1.0;
           ctx!.fillStyle = `rgba(255,255,255,${stepped * currentStarOpacity})`;
@@ -503,7 +532,7 @@ export default function LiveSkyBackground() {
 
       // ── Shooting star ──
       const shoot = shootingRef.current;
-      if (shoot.active) {
+      if (shoot.active && !reduced) {
         shoot.progress += 0.015;
         if (shoot.progress >= 1) { shoot.active = false; nextShootRef.current = time + 60000 + Math.random() * 180000; }
         else {
@@ -561,11 +590,13 @@ export default function LiveSkyBackground() {
       ctx!.fillStyle = rgb(lerpColor(wb, wbc, 0.3));
       ctx!.fillRect(0, waterY, w, waterH);
 
-      for (const wp of waterPixelsRef.current) {
-        const sh = Math.sin(time / 1000 * wp.speed + wp.phase);
-        const br = Math.max(0, Math.min(1, wp.baseBrightness + sh * 0.15));
-        ctx!.fillStyle = rgba(lerpColor(wb, wbc, br * 0.5), 0.5 + br * 0.3);
-        ctx!.fillRect(wp.x * pixW, waterY + wp.y * pixW, pixW, pixW);
+      if (!reduced) {
+        for (const wp of waterPixelsRef.current) {
+          const sh = Math.sin(time / 1000 * wp.speed + wp.phase);
+          const br = Math.max(0, Math.min(1, wp.baseBrightness + sh * 0.15));
+          ctx!.fillStyle = rgba(lerpColor(wb, wbc, br * 0.5), 0.5 + br * 0.3);
+          ctx!.fillRect(wp.x * pixW, waterY + wp.y * pixW, pixW, pixW);
+        }
       }
 
       // Waves
@@ -577,7 +608,7 @@ export default function LiveSkyBackground() {
         const bx = sw.x * w;
         const segs = Math.floor(sw.height / 6);
         for (let i = 0; i < segs; i++) {
-          const sway = Math.sin(time / 1000 * sw.swaySpeed + sw.swayPhase + i * 0.3) * (i * 1.5);
+          const sway = reduced ? 0 : Math.sin(time / 1000 * sw.swaySpeed + sw.swayPhase + i * 0.3) * (i * 1.5);
           const sy = waterY + waterH - i * 6;
           if (sy < waterY) break;
           ctx!.fillStyle = sw.color;
@@ -587,23 +618,21 @@ export default function LiveSkyBackground() {
 
       // ── Fish (4 shape variants) ──
       for (const f of fishRef.current) {
-        f.x += f.speed;
-        if (f.x > 1.1) f.x = -0.1;
+        if (!reduced) { f.x += f.speed; if (f.x > 1.1) f.x = -0.1; }
         const fx = f.x * w;
         const bob = Math.sin(time / 800 + f.bobPhase) * 3;
         const fy = waterY + waterH * 0.3 + f.y * waterH * 0.5 + bob;
         FISH_DRAWERS[f.shape](ctx!, fx, fy, f.size, f.color);
       }
 
+      // ── Night factor for island/boat visibility ──
+      const nightFactor = Math.max(0, Math.min(1, (-currentSunAlt) / 18));
+
       // ── Bikini Bottom island (right side) ──
-      // DIAGNOSTIC: log coordinates once per second
-      if (Math.floor(time / 1000) !== Math.floor((time - 16) / 1000)) {
-        console.log(`[SKY] w=${w} h=${h} waterY=${waterY.toFixed(1)} waterH=${waterH.toFixed(1)} islandY=${(waterY + waterH * 0.12).toFixed(1)} boatY=${(waterY + waterH * 0.2).toFixed(1)}`);
-      }
-      drawIsland(w, waterY, waterH);
+      drawIsland(w, waterY, waterH, nightFactor);
 
       // ── Tyrion's boat (left side) ──
-      drawBoat(w, waterY, waterH, time);
+      drawBoat(w, waterY, waterH, time, nightFactor, reduced);
 
       animFrameRef.current = requestAnimationFrame(draw);
     }
