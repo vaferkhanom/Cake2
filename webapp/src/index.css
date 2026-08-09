@@ -44,18 +44,8 @@ body {
 }
 
 @keyframes starTwinkle {
-  0%, 100% { opacity: 0.6; }
-  50% { opacity: 0.15; }
-}
-
-@keyframes cloudDrift {
-  0% { transform: translateX(0); }
-  100% { transform: translateX(15px); }
-}
-
-@keyframes starTwinkle {
-  0%, 100% { opacity: 0.6; }
-  50% { opacity: 0.15; }
+  0%, 100% { opacity: 0.7; transform: rotate(45deg) scale(1); }
+  50% { opacity: 0.15; transform: rotate(45deg) scale(0.7); }
 }
 
 @media (prefers-reduced-motion: reduce) {
